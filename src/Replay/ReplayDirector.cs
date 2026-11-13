@@ -70,6 +70,7 @@ namespace UltraAttempts.Replay
 
         private Origin origin;
         private ReplaySource source;
+        private StatsManager waitingIn;
         private bool thenNextLevel;
         private FinalRank levelEndRank;
         private FinalRank levelEndShownFor;
@@ -149,6 +150,7 @@ namespace UltraAttempts.Replay
             }
             origin = Origin.Cheat;
             source = Settings.Source.Value;
+            waitingIn = Game.Stats;
             State = Phase.Waiting;
         }
 
@@ -664,6 +666,11 @@ namespace UltraAttempts.Replay
         private void WaitForMenu()
         {
             NewMovement nm = Game.Player;
+            if (!ReferenceEquals(Game.Stats, waitingIn))
+            {
+                State = Phase.Idle;  // (asked for in a level that's gone now)
+                return;
+            }
             if (Recorder.Instance?.Level == null || nm == null)
             {
                 State = Phase.Idle;
