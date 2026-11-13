@@ -38,7 +38,8 @@ namespace UltraAttempts.Recording
     // finished, in one file: a header, then blocks appended as attempts end:
     //   "UKAT" u16 version, header fields
     //   block: u8 type, i32 length, payload
-    //     1 Attempt   payload = AttemptCodec
+    //     1 Attempt   payload = AttemptCodec (each attempt has its own format version, so a run begun
+    //                 with an older UltraAttempts carries on with newer attempts in the same file)
     //     2 Complete  payload = i32 winning attempt, f32 level time, i64 utc ticks
     public static class SessionFile
     {
@@ -144,8 +145,9 @@ namespace UltraAttempts.Recording
             }
         }
 
-        // Every attempt in the file, decoded. A damaged attempt is skipped (onError says which).
-        public static SessionData Load(string path, Action<string> onError = null)
+        // Every attempt in the file, decoded. A damaged attempt is skipped (onError says which). world:
+        // false leaves out the enemies and doors (most of a recent attempt's size once decoded).
+        public static SessionData Load(string path, Action<string> onError = null, bool world = true)
         {
             byte[] bytes;
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
@@ -180,7 +182,7 @@ namespace UltraAttempts.Recording
                         data.Info.Attempts++;
                         try
                         {
-                            data.Attempts.Add(AttemptCodec.Decode(bytes, start, length));
+                            data.Attempts.Add(AttemptCodec.Decode(bytes, start, length, world));
                         }
                         catch (Exception e)
                         {
