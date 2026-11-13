@@ -238,6 +238,9 @@ namespace UltraAttemptsSelfTest
             Check(data.Attempts.All(a => a.Count > 10), "every attempt has samples: " + string.Join(",", data.Attempts.Select(a => a.Count)));
             Check(data.Attempts.Last().Count > data.Attempts.First().Count, "the winning attempt is the longest");
             Check(data.Attempts.All(a => a.Events.Any(e => e.Kind == EventKind.Weapon)), "weapons recorded");
+            Check(data.Attempts.All(a => a.SampleRate == Settings.SampleRate.Value), $"sampled at {Settings.SampleRate.Value} a second");
+            Check(data.Attempts.Any(a => a.DoorPaths.Count > 0 && a.Events.Any(e => e.Kind == EventKind.Door && e.Sample == 0)), "doors recorded (their state at each attempt's start)");
+            Log($"world recorded: {data.Attempts.Sum(a => a.Enemies.Count)} enemy tracks ({data.Attempts.Sum(a => a.Enemies.Count(e => e.Died))} killed), {data.Attempts.Max(a => a.DoorPaths.Count)} doors");
             long bytes = new FileInfo(run).Length;
             float seconds = data.Attempts.Sum(a => a.Duration);
             Log($"run file: {bytes} bytes for {seconds:0.0} s of attempts ({bytes / Mathf.Max(seconds, 0.1f):0} bytes/s incl. header)");
@@ -254,6 +257,8 @@ namespace UltraAttemptsSelfTest
             yield return Wait(0.9f);
             yield return Shot("03-replay-next-to-die");
             Check(Director.Follow != null && Director.Follow.Dies, $"next-to-die follows an attempt that dies (#{Director.Follow?.Number})");
+            yield return Wait(1.5f);
+            yield return Shot("03b-eyes-moving");
             SetMode(ReplayCamera.BestRun);
             yield return Wait(1f);
             Check(Director.Follow == Director.Best, "best-run follows the win");
