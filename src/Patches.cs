@@ -7,7 +7,8 @@ using UnityEngine.InputSystem;
 namespace UltraAttempts
 {
     // Where UltraAttempts hooks into ULTRAKILL. Recording only listens (scene loads, restarts, the results
-    // screen); the replay takes over the camera, Escape, and the results screen's "continue".
+    // screen, the camera, doors); the replay takes over the camera, Escape, and the results screen's
+    // "continue".
     [HarmonyPatch]
     internal static class Patches
     {
@@ -33,9 +34,23 @@ namespace UltraAttempts
         [HarmonyPatch(typeof(Door), nameof(Door.Optimize)), HarmonyPrefix]
         private static void RoomsOff(Door __instance) => RoomReveal.Track(__instance.deactivatedRooms);
 
-        // The replay's camera, after ULTRAKILL has put its own on V1.
+        // Doors opening and closing (recorded, to show them in a replay; not the replay's own doings).
+        [HarmonyPatch(typeof(Door), nameof(Door.Open)), HarmonyPostfix]
+        private static void DoorOpened(Door __instance) => Recorder.Instance?.OnDoor(__instance, Replaying);
+
+        [HarmonyPatch(typeof(Door), nameof(Door.Close)), HarmonyPostfix]
+        private static void DoorClosed(Door __instance) => Recorder.Instance?.OnDoor(__instance, Replaying);
+
+        // After ULTRAKILL has put its camera on V1 for this frame: the recording's sample (body and eyes
+        // read at the same moment), then the replay's camera.
         [HarmonyPatch(typeof(CameraController), "LateUpdate"), HarmonyPostfix]
-        private static void CameraLateUpdate(CameraController __instance) => ReplayDirector.Instance?.ApplyCamera(__instance);
+        private static void CameraLateUpdate(CameraController __instance)
+        {
+            Recorder.Instance?.CameraLateUpdate(__instance, Replaying);
+            ReplayDirector.Instance?.ApplyCamera(__instance);
+        }
+
+        private static bool Replaying => ReplayDirector.Instance != null && ReplayDirector.Instance.Presenting;
 
         // Escape during a replay leaves it (instead of pausing). The cheat menu's keys still pause, so
         // the cheat menu opens over the replay.

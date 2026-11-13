@@ -11,6 +11,10 @@ using HarmonyLib;
 // counts as a pass. Any other failure is a real one.
 internal static class Program
 {
+    // Every hook in Patches: cheats, scene loads, restarts, results, rooms off, doors opening and
+    // closing, the camera, Escape, continuing from the results screen.
+    private const int Expected = 10;
+
     private static string game;
     private static string plugin;
 
@@ -88,7 +92,7 @@ internal static class Program
                 failed++;
             }
         }
-        Console.WriteLine(failed == 0 && ok == 8 ? "all 8 hooks found and accepted" : $"{failed} failed, {ok} ok (expected 8)");
-        return failed == 0 && ok == 8 ? 0 : 1;
+        Console.WriteLine(failed == 0 && ok == Expected ? $"all {Expected} hooks found and accepted" : $"{failed} failed, {ok} ok (expected {Expected})");
+        return failed == 0 && ok == Expected ? 0 : 1;
     }
 }
