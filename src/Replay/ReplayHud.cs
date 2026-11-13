@@ -165,7 +165,8 @@ namespace UltraAttempts.Replay
             Box(new Rect(20f, 20f, 400f, 196f), Panel);
             Text(new Rect(36f, 30f, 380f, 40f), "ATTEMPT REPLAY", 32, Accent, bold: true);
             Text(new Rect(36f, 72f, 380f, 24f), d.LevelName.ToUpperInvariant(), 18, Color.white);
-            Text(new Rect(36f, 98f, 380f, 22f), $"{d.SourceLabel}  |  {count} ATTEMPT{(count == 1 ? "" : "S")}", 15, Dim);
+            string days = d.RunDays > 1 ? $"  |  {d.RunDays} DAYS" : "";
+            Text(new Rect(36f, 98f, 380f, 22f), $"{d.SourceLabel}  |  {count} ATTEMPT{(count == 1 ? "" : "S")}{days}", 15, Dim);
             Row(132f, "ALIVE", d.Alive.ToString(), Color.white);
             Row(156f, "DEATHS", d.DeadSoFar.ToString(), new Color(1f, 0.45f, 0.4f));
             Row(180f, "FINISHED", d.FinishedSoFar.ToString(), GhostRenderer.Gold);
@@ -193,7 +194,7 @@ namespace UltraAttempts.Replay
         {
             float x = w - 440f;
             Ghost g = d.Following ? d.Follow : null;
-            float height = g == null ? 52f : 196f;
+            float height = g == null ? 52f : 214f;
             Box(new Rect(x, 20f, 420f, height), Panel);
             Text(new Rect(x + 16f, 28f, 390f, 24f), "CAMERA  " + ModeName(d), 17, Dim);
             if (g == null)
@@ -225,20 +226,32 @@ namespace UltraAttempts.Replay
                     break;
             }
             Text(new Rect(x + 16f, 94f, 390f, 26f), status, 20, statusColor);
+            // When it was played, and which day of the run that was (when the run took more than one).
+            string when = g.When;
+            if (g.Day > 0 && g.RunDays > 1)
+            {
+                when += (when.Length > 0 ? "  |  " : "") + "DAY " + g.Day;
+            }
+            Text(new Rect(x + 16f, 122f, 390f, 22f), when, 15, Dim);
             if (g.StartKind == AttemptStart.Checkpoint)
             {
-                Text(new Rect(x + 16f, 120f, 390f, 22f), "FROM A CHECKPOINT", 14, Dim);
+                Text(new Rect(x + 16f, 122f, 390f, 22f), "FROM A CHECKPOINT", 14, Dim, TextAnchor.UpperRight);
             }
 
-            Ghost.Pose p = g.PoseAt(Mathf.Min(d.T, g.Duration));
+            float now = Mathf.Min(d.T, g.Duration);
+            Ghost.Pose p = g.PoseAt(now);
             float hp = p.Hp / 100f;
-            Box(new Rect(x + 16f, 148f, 200f, 10f), new Color(1f, 1f, 1f, 0.15f));
-            Box(new Rect(x + 16f, 148f, 200f * Mathf.Clamp01(hp), 10f), new Color(1f, 0.2f, 0.2f, 0.9f));
+            Box(new Rect(x + 16f, 152f, 200f, 10f), new Color(1f, 1f, 1f, 0.15f));
+            Box(new Rect(x + 16f, 152f, 200f * Mathf.Clamp01(hp), 10f), new Color(1f, 0.2f, 0.2f, 0.9f));
             if (hp > 1f)
             {
-                Box(new Rect(x + 16f, 148f, 200f * Mathf.Clamp01(hp - 1f), 10f), new Color(0.3f, 0.6f, 1f, 0.9f));
+                Box(new Rect(x + 16f, 152f, 200f * Mathf.Clamp01(hp - 1f), 10f), new Color(0.3f, 0.6f, 1f, 0.9f));
             }
-            Text(new Rect(x + 224f, 141f, 80f, 22f), p.Hp + " HP", 14, Dim);
+            Text(new Rect(x + 224f, 145f, 80f, 22f), p.Hp + " HP", 14, Dim);
+            if (g.HasEnemies)
+            {
+                Text(new Rect(x + 16f, 143f, 390f, 24f), "KILLS " + g.KillsAt(now), 16, Color.white, TextAnchor.UpperRight);
+            }
 
             if (Settings.ShowWeapons.Value)
             {
@@ -256,11 +269,11 @@ namespace UltraAttempts.Replay
                         float h = 30f, iw = h * tr.width / Mathf.Max(1f, tr.height);
                         Color before = GUI.color;
                         GUI.color = c;
-                        GUI.DrawTextureWithTexCoords(new Rect(tx, 166f, iw, h), icon.texture, uv);
+                        GUI.DrawTextureWithTexCoords(new Rect(tx, 174f, iw, h), icon.texture, uv);
                         GUI.color = before;
                         tx += iw + 10f;
                     }
-                    Text(new Rect(tx, 170f, 390f, 24f), name.ToUpperInvariant(), 16, c);
+                    Text(new Rect(tx, 178f, 390f, 24f), name.ToUpperInvariant(), 16, c);
                 }
             }
         }
@@ -339,16 +352,24 @@ namespace UltraAttempts.Replay
         {
             int count = d.Ghosts.Count;
             Ghost best = d.Best;
-            Box(new Rect(w * 0.5f - 380f, Ref * 0.36f, 760f, 170f), new Color(0f, 0f, 0f, 0.7f));
-            string head = best != null && best.Finished ? $"ATTEMPT {best.Number}: LEVEL CLEAR" : $"{count} ATTEMPT{(count == 1 ? "" : "S")}";
-            Text(new Rect(0f, Ref * 0.36f + 22f, w, 54f), head, 44, best != null && best.Finished ? GhostRenderer.Gold : Color.white, TextAnchor.MiddleCenter, bold: true);
+            bool won = best != null && best.Finished;
+            float top = Ref * 0.36f;
+            float height = d.RunDays > 1 ? 198f : 170f;
+            Box(new Rect(w * 0.5f - 380f, top, 760f, height), new Color(0f, 0f, 0f, 0.7f));
+            string head = won ? $"ATTEMPT {best.Number}: LEVEL CLEAR" : $"{count} ATTEMPT{(count == 1 ? "" : "S")}";
+            Text(new Rect(0f, top + 22f, w, 54f), head, 44, won ? GhostRenderer.Gold : Color.white, TextAnchor.MiddleCenter, bold: true);
             string line = $"{count} ATTEMPTS  |  {d.DeadSoFar} DEATHS";
-            if (best != null && best.Finished)
+            if (won)
             {
                 line += "  |  TIME " + Clock(best.LevelTime, millis: true);
             }
-            Text(new Rect(0f, Ref * 0.36f + 86f, w, 30f), line, 22, Color.white, TextAnchor.MiddleCenter);
-            Text(new Rect(0f, Ref * 0.36f + 124f, w, 24f), "SPACE  WATCH AGAIN", 15, Dim, TextAnchor.MiddleCenter);
+            Text(new Rect(0f, top + 86f, w, 30f), line, 22, Color.white, TextAnchor.MiddleCenter);
+            if (d.RunDays > 1)
+            {
+                // (runs go on across launches: this one took days)
+                Text(new Rect(0f, top + 120f, w, 26f), won ? $"IT TOOK {d.RunDays} DAYS" : $"{d.RunDays} DAYS SO FAR", 19, won ? GhostRenderer.Gold : Color.white, TextAnchor.MiddleCenter);
+            }
+            Text(new Rect(0f, top + height - 46f, w, 24f), "SPACE  WATCH AGAIN", 15, Dim, TextAnchor.MiddleCenter);
         }
 
         // "#512" over the followed attempt (when you're not inside its head) and the winner.
