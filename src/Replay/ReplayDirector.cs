@@ -10,8 +10,9 @@ using UnityEngine.InputSystem;
 namespace UltraAttempts.Replay
 {
     // Plays every attempt at a level at once, Geometry Dash style. The world freezes (time stops, your
-    // controls lock, the HUD hides), the ghosts run on real time, and the camera follows one of them,
-    // frames them all, or flies free. Everything goes back as it was after.
+    // controls lock, the HUD hides), the ghosts run on real time, and the camera follows one of them
+    // (seeing its enemies and doors as they were then), frames them all, or flies free. Everything goes
+    // back as it was after.
     internal sealed class ReplayDirector
     {
         public static ReplayDirector Instance { get; private set; }
@@ -35,7 +36,9 @@ namespace UltraAttempts.Replay
         private const float DeathHold = 0.3f;
         private const float EndPadding = 0.75f;
         private const float SummarySeconds = 4f;
+        private const float ChaseLag = 0.12f;
         private static readonly float[] Speeds = { 0.1f, 0.25f, 0.5f, 1f, 2f, 4f, 8f };
+        private static readonly string[] Months = { "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC" };
 
         public Phase State { get; private set; } = Phase.Idle;
 
@@ -62,6 +65,7 @@ namespace UltraAttempts.Replay
         public float[] Histogram { get; private set; } = new float[0];
         public string LevelName { get; private set; } = "";
         public string SourceLabel { get; private set; } = "";
+        public int RunDays { get; private set; }   // how many days the run shown (the best one's) took
         public Camera Camera => cc != null ? cc.cam : null;
         public float Flash { get; set; }
         public bool Following => Follow != null && (mode == ReplayCamera.NextToDie || mode == ReplayCamera.BestRun || manual != null);
@@ -98,18 +102,29 @@ namespace UltraAttempts.Replay
         private Vector3 blendPos;
         private Quaternion blendRot = Quaternion.identity;
         private float blendStart = -10f;
+        private Ghost.Pose[] poses = new Ghost.Pose[0];   // every ghost alive this frame, by Index
+        private Ghost.Pose followPose;                    // the followed one, smoothed: what the camera sees
+        private float screenShake = 1f;
 
         private float chaseYaw;
         private float chasePitch = 12f;
         private float chaseDistance = 6f;
+        private Quaternion chaseHeading = Quaternion.identity;
+        private float chaseReach;
+        private bool chaseFresh = true;
         private Vector3 overviewPos;
         private Vector3 overviewVelocity;
         private Quaternion overviewRot = Quaternion.identity;
+        private Vector3 overviewCenter;
+        private Vector3 overviewCenterVelocity;
+        private bool overviewFresh = true;
         private float overviewYaw;
         private float overviewUserYaw;
         private float overviewUserPitch;
         private float overviewZoom = 1f;
         private Vector3 freePos;
+        private Vector3 freeVelocity;
+        private Quaternion freeLook = Quaternion.identity;
         private float freeYaw;
         private float freePitch;
         private float freeSpeed = 18f;
@@ -117,6 +132,7 @@ namespace UltraAttempts.Replay
         private GameObject root;
         private GameState state;
         private GhostRenderer renderer;
+        private WorldPlayback world;
         private ReplaySounds sounds;
         private CameraController cc;
         private Vector3 savedLocalPos;
@@ -260,12 +276,16 @@ namespace UltraAttempts.Replay
 
             environment = LayerMaskDefaults.Get(LMD.Environment);
             renderer = new GhostRenderer(cc.cam, root.transform);
+            world = new WorldPlayback(cc.cam, root.transform);
             sounds = new ReplaySounds(root);
+            var prefs = Game.Get<PrefsManager>();
+            screenShake = prefs != null ? Mathf.Clamp(prefs.GetFloat("screenShake", 1f), 0f, 2f) : 1f;
             LevelName = level.Name;
             Ghosts = new List<Ghost>();
             Best = null;
             Follow = null;
             manual = null;
+            RunDays = 0;
             total = 0f;
             t = 0f;
             summaryAt = -1f;
@@ -277,6 +297,8 @@ namespace UltraAttempts.Replay
             markers = Settings.DeathMarkers.Value;
             overviewPos = camPos;
             overviewRot = camRot;
+            overviewFresh = true;
+            chaseFresh = true;
             InitFreeCam();
 
             RawAttempt snapshot = source == ReplaySource.LastFinishedRun ? null : Recorder.Instance.Snapshot();
@@ -297,6 +319,16 @@ namespace UltraAttempts.Replay
             }
             State = Phase.Idle;
             Origin was = origin;
+            try
+            {
+                // (first, while the doors and the level's enemies are all still there to put back)
+                world?.Dispose();
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("putting the level back after a replay: " + e);
+            }
+            world = null;
             try
             {
                 RoomReveal.Hide(revealed);
@@ -337,6 +369,7 @@ namespace UltraAttempts.Replay
             hiddenCanvas = null;
             havePose = false;
             Ghosts = new List<Ghost>();
+            poses = new Ghost.Pose[0];
             Follow = null;
             Best = null;
             loading = null;
@@ -447,8 +480,14 @@ namespace UltraAttempts.Replay
 
                 int order = 0;
                 bool renumber = source == ReplaySource.Everything;
-                foreach (SessionData run in runs)
+                int snapshotRun = runs.Count;  // (the run being played: its file's, once it has one)
+                for (int r = 0; r < runs.Count; r++)
                 {
+                    SessionData run = runs[r];
+                    if (SamePath(run.Info?.Path, thisRun))
+                    {
+                        snapshotRun = r;
+                    }
                     foreach (RawAttempt raw in run.Attempts)
                     {
                         if (raw.Count < 2)
@@ -457,6 +496,7 @@ namespace UltraAttempts.Replay
                         }
                         Ghost g = Ghost.FromRaw(raw, run.Info.Header);
                         g.Order = order++;
+                        g.Run = r;
                         if (renumber)
                         {
                             g.Number = g.Order + 1;
@@ -474,12 +514,14 @@ namespace UltraAttempts.Replay
                     };
                     Ghost g = Ghost.FromRaw(snapshot, header);
                     g.Order = order++;
+                    g.Run = snapshotRun;
                     if (renumber)
                     {
                         g.Number = g.Order + 1;
                     }
                     result.Ghosts.Add(g);
                 }
+                Dates(result.Ghosts);
 
                 if (maxGhosts > 0 && result.Ghosts.Count > maxGhosts)
                 {
@@ -495,6 +537,82 @@ namespace UltraAttempts.Replay
             return result;
         }
 
+        private static bool SamePath(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
+            {
+                return false;
+            }
+            try
+            {
+                return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception)
+            {
+                return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        // When each attempt was played ("13 NOV 18:42", local time), and which day of its run that was:
+        // runs go on across game launches, so one can take days.
+        private static void Dates(List<Ghost> ghosts)
+        {
+            var first = new Dictionary<int, DateTime>();
+            var last = new Dictionary<int, DateTime>();
+            var times = new DateTime[ghosts.Count];
+            var known = new bool[ghosts.Count];
+            for (int i = 0; i < ghosts.Count; i++)
+            {
+                Ghost g = ghosts[i];
+                if (!LocalTime(g.StartedUtcTicks, out times[i]))
+                {
+                    continue;
+                }
+                known[i] = true;
+                DateTime day = times[i].Date;
+                if (!first.TryGetValue(g.Run, out DateTime f) || day < f)
+                {
+                    first[g.Run] = day;
+                }
+                if (!last.TryGetValue(g.Run, out DateTime l) || day > l)
+                {
+                    last[g.Run] = day;
+                }
+            }
+            int year = DateTime.Now.Year;
+            for (int i = 0; i < ghosts.Count; i++)
+            {
+                if (!known[i])
+                {
+                    continue;
+                }
+                Ghost g = ghosts[i];
+                DateTime when = times[i];
+                g.Day = (when.Date - first[g.Run]).Days + 1;
+                g.RunDays = (last[g.Run] - first[g.Run]).Days + 1;
+                string date = when.Day + " " + Months[when.Month - 1] + (when.Year != year ? " " + when.Year : "");
+                g.When = $"{date} {when.Hour:00}:{when.Minute:00}";
+            }
+        }
+
+        private static bool LocalTime(long utcTicks, out DateTime local)
+        {
+            local = default;
+            if (utcTicks <= 0 || utcTicks > DateTime.MaxValue.Ticks)
+            {
+                return false;
+            }
+            try
+            {
+                local = new DateTime(utcTicks, DateTimeKind.Utc).ToLocalTime();
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+        }
+
         private void Loaded(LoadResult result)
         {
             if (result.Error != null || result.Ghosts.Count == 0)
@@ -508,6 +626,12 @@ namespace UltraAttempts.Replay
             Best = Ghosts.Where(g => g.Finished).OrderBy(g => g.LevelTime).FirstOrDefault()
                 ?? Ghosts.OrderByDescending(g => g.Duration).First();
             Best.IsBest = true;
+            RunDays = Best.RunDays;
+            poses = new Ghost.Pose[count];
+            for (int i = 0; i < count; i++)
+            {
+                Ghosts[i].Index = i;
+            }
             foreach (Ghost g in Ghosts)
             {
                 float k = count > 1 ? g.Order / (float)(count - 1) : 1f;
@@ -542,9 +666,20 @@ namespace UltraAttempts.Replay
             }
             Histogram = bins;
             SourceLabel = result.Label;
+            try
+            {
+                world.Prepare(Ghosts);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("getting the replay's world ready (no enemies or doors this time; the ghosts still play): " + e);
+                world.Dispose();
+                world = null;
+            }
             State = Phase.Playing;
             BeginBlend();
-            Plugin.Log.LogInfo($"replaying {count} attempts at {LevelName} ({result.Label.ToLowerInvariant()}), {total:0.0} s");
+            Plugin.Log.LogInfo($"replaying {count} attempts at {LevelName} ({result.Label.ToLowerInvariant()}), {total:0.0} s"
+                + (RunDays > 1 ? $", a run of {RunDays} days" : ""));
         }
 
         // ---------------------------------------------------------------- every frame
@@ -613,8 +748,26 @@ namespace UltraAttempts.Replay
             {
                 Happenings(before, t);
             }
+            PoseAll();
             UpdateCamera(dt);
             Draw();
+        }
+
+        // Where every ghost alive is this frame, worked out once (the overview and the drawing both use it).
+        private void PoseAll()
+        {
+            if (poses.Length != Ghosts.Count)
+            {
+                poses = new Ghost.Pose[Ghosts.Count];
+            }
+            for (int i = 0; i < Ghosts.Count; i++)
+            {
+                Ghost g = Ghosts[i];
+                if (g.AliveAt(t))
+                {
+                    poses[i] = g.PoseAt(t);
+                }
+            }
         }
 
         public void LateUpdate()
@@ -715,6 +868,7 @@ namespace UltraAttempts.Replay
             summaryAt = -1f;
             manual = null;
             Follow = null;
+            chaseFresh = true;
             renderer.ClearTracers();
             BeginBlend();
         }
@@ -774,6 +928,7 @@ namespace UltraAttempts.Replay
             {
                 firstPerson = !firstPerson;
                 Settings.FirstPerson.Value = firstPerson;
+                chaseFresh = true;
                 BeginBlend();
             }
             if (kb.hKey.wasPressedThisFrame)
@@ -836,7 +991,10 @@ namespace UltraAttempts.Replay
                     (kb.eKey.isPressed ? 1f : 0f) - (kb.qKey.isPressed ? 1f : 0f),
                     (kb.wKey.isPressed ? 1f : 0f) - (kb.sKey.isPressed ? 1f : 0f));
                 float speed = freeSpeed * (shift ? 4f : 1f) * (kb.ctrlKey.isPressed ? 0.25f : 1f);
-                freePos += Quaternion.Euler(freePitch, freeYaw, 0f) * move * (speed * dt);
+                // (eases into and out of moving, rather than jerking to full speed and dead still)
+                Vector3 wish = Quaternion.Euler(freePitch, freeYaw, 0f) * move * speed;
+                freeVelocity = Vector3.Lerp(freeVelocity, wish, 1f - Mathf.Exp(-dt / 0.1f));
+                freePos += freeVelocity * dt;
             }
         }
 
@@ -851,6 +1009,7 @@ namespace UltraAttempts.Replay
                 overviewPos = camPos;
                 overviewVelocity = Vector3.zero;
                 overviewRot = camRot;
+                overviewFresh = true;
             }
             mode = next;
             manual = null;
@@ -862,15 +1021,18 @@ namespace UltraAttempts.Replay
         private void InitFreeCam()
         {
             freePos = camPos;
+            freeVelocity = Vector3.zero;
             Vector3 euler = camRot.eulerAngles;
             freeYaw = euler.y;
             freePitch = Mathf.Clamp(Mathf.DeltaAngle(0f, euler.x), -89f, 89f);
+            freeLook = Quaternion.Euler(freePitch, freeYaw, 0f);
         }
 
         private void Seek(float seconds)
         {
             t = Mathf.Clamp(t + seconds, 0f, total);
             summaryAt = -1f;
+            chaseFresh = true;
             if (Follow != null && autoPicked)
             {
                 Follow = null;
@@ -995,6 +1157,7 @@ namespace UltraAttempts.Replay
                     Flash = 0.45f;
                 }
                 Follow = target;
+                chaseFresh = true;
                 BeginBlend();
             }
 
@@ -1002,21 +1165,17 @@ namespace UltraAttempts.Replay
             Quaternion rot;
             if (Follow != null)
             {
-                Ghost.Pose p = Follow.PoseAt(Mathf.Min(t, Follow.Duration));
+                // (averaged over a few hundredths of a second either side: steady, without lagging behind;
+                // nothing carries over from one attempt or moment to the next, so cuts and seeks stay crisp)
+                followPose = Follow.SmoothPoseAt(Mathf.Min(t, Follow.Duration), Settings.CameraSmoothing.Value);
                 if (firstPerson)
                 {
-                    pos = p.Eye;
-                    rot = p.Look;
+                    pos = followPose.Eye;
+                    rot = followPose.Look;
                 }
                 else
                 {
-                    Vector3 forward = Vector3.ProjectOnPlane(p.Look * Vector3.forward, p.Up);
-                    if (forward.sqrMagnitude < 1e-4f)
-                    {
-                        forward = Vector3.ProjectOnPlane(p.Look * Vector3.up, p.Up);
-                    }
-                    rot = Quaternion.LookRotation(forward.normalized, p.Up) * Quaternion.AngleAxis(chaseYaw, Vector3.up) * Quaternion.AngleAxis(chasePitch, Vector3.right);
-                    pos = Collide(p.Eye, p.Eye - rot * Vector3.forward * chaseDistance);
+                    Chase(followPose, dt, out pos, out rot);
                 }
             }
             else if (mode == ReplayCamera.Overview)
@@ -1025,7 +1184,9 @@ namespace UltraAttempts.Replay
             }
             else
             {
-                rot = Quaternion.Euler(freePitch, freeYaw, 0f);
+                // (a touch of smoothing on the mouse, so a fly-by doesn't jitter)
+                freeLook = Quaternion.Slerp(freeLook, Quaternion.Euler(freePitch, freeYaw, 0f), 1f - Mathf.Exp(-dt / 0.04f));
+                rot = freeLook;
                 pos = freePos;
             }
 
@@ -1039,6 +1200,74 @@ namespace UltraAttempts.Replay
             {
                 camPos = pos;
                 camRot = rot;
+                if (Follow != null && firstPerson && Settings.CameraShake.Value)
+                {
+                    camPos += Shake(Follow, Mathf.Min(t, Follow.Duration));
+                }
+            }
+        }
+
+        // Behind and above the followed attempt. Its mouse turns it at once; the camera swings round after
+        // it (rather than jerking with every flick), pulls in at once in front of a wall, and eases back out.
+        private void Chase(in Ghost.Pose p, float dt, out Vector3 pos, out Quaternion rot)
+        {
+            Vector3 forward = Vector3.ProjectOnPlane(p.Look * Vector3.forward, p.Up);
+            if (forward.sqrMagnitude < 1e-4f)
+            {
+                forward = Vector3.ProjectOnPlane(p.Look * Vector3.up, p.Up);
+            }
+            Quaternion heading = Quaternion.LookRotation(forward.normalized, p.Up);
+            chaseHeading = chaseFresh ? heading : Quaternion.Slerp(chaseHeading, heading, 1f - Mathf.Exp(-dt / ChaseLag));
+            rot = chaseHeading * Quaternion.AngleAxis(chaseYaw, Vector3.up) * Quaternion.AngleAxis(chasePitch, Vector3.right);
+            Vector3 back = rot * Vector3.back;
+            float reach = Vector3.Distance(p.Eye, Collide(p.Eye, p.Eye + back * chaseDistance));
+            chaseReach = chaseFresh || reach < chaseReach ? reach : Mathf.Lerp(chaseReach, reach, 1f - Mathf.Exp(-dt * 5f));
+            chaseFresh = false;
+            pos = p.Eye + back * chaseReach;
+        }
+
+        // ULTRAKILL's own shake when it got hurt (damage / 20, wearing off at 3 a second), times the game's
+        // screen shake setting. Worked out from the replay's time, so pausing holds it still.
+        private Vector3 Shake(Ghost g, float time)
+        {
+            int now = Mathf.Clamp((int)(time * g.Rate), 0, g.Count - 1);
+            float amount = 0f;
+            for (int k = Mathf.Max(1, now - g.Rate / 2); k <= now; k++)
+            {
+                int lost = g.Hp[k - 1] - g.Hp[k];
+                if (lost > 0)
+                {
+                    amount = Mathf.Max(amount, lost / 20f - (time - k / (float)g.Rate) * 3f);
+                }
+            }
+            amount = Mathf.Min(amount, 1f) * screenShake * 0.5f;
+            if (amount <= 0.001f)
+            {
+                return Vector3.zero;
+            }
+            int tick = (int)(time * 60f);  // (a new jolt every 60th of a second, as the game makes one a frame)
+            Vector3 offset = camRot * new Vector3(Noise(tick * 2), Noise(tick * 2 + 1), 0f) * amount;
+            float length = offset.magnitude;
+            if (length < 1e-3f)
+            {
+                return Vector3.zero;
+            }
+            if (Physics.Raycast(camPos, offset / length, out RaycastHit hit, length + 0.2f, environment, QueryTriggerInteraction.Ignore))
+            {
+                offset *= Mathf.Max(0f, hit.distance - 0.2f) / length;  // (not into a wall)
+            }
+            return offset;
+        }
+
+        // -1..1, the same for the same n.
+        private static float Noise(int n)
+        {
+            unchecked
+            {
+                uint h = (uint)n * 747796405u + 2891336453u;
+                h = ((h >> (int)((h >> 28) + 4u)) ^ h) * 277803737u;
+                h = (h >> 22) ^ h;
+                return h / 2147483648f - 1f;
             }
         }
 
@@ -1053,9 +1282,9 @@ namespace UltraAttempts.Replay
                 {
                     continue;
                 }
-                Vector3 at = g.PoseAt(t).Body;
-                sum += at;
-                heading += at - g.PoseAt(Mathf.Max(0f, t - 0.5f)).Body;
+                Ghost.Pose p = poses[g.Index];
+                sum += p.Body;
+                heading += p.Body - g.Body[Mathf.Max(0, p.Sample - g.Rate / 2)];
                 n++;
             }
             if (n == 0)
@@ -1075,11 +1304,23 @@ namespace UltraAttempts.Replay
                 {
                     if (g.AliveAt(t))
                     {
-                        spread += Vector3.Distance(g.PoseAt(t).Body, center);
+                        spread += Vector3.Distance(poses[g.Index].Body, center);
                     }
                 }
                 spread /= n;
             }
+            // (the middle glides on when attempts die or a straggler drags it, instead of jumping)
+            if (overviewFresh)
+            {
+                overviewCenter = center;
+                overviewCenterVelocity = Vector3.zero;
+                overviewFresh = false;
+            }
+            else
+            {
+                overviewCenter = Vector3.SmoothDamp(overviewCenter, center, ref overviewCenterVelocity, 0.3f, Mathf.Infinity, dt);
+            }
+            center = overviewCenter;
             heading.y = 0f;
             if (heading.sqrMagnitude > 0.5f)
             {
@@ -1191,13 +1432,34 @@ namespace UltraAttempts.Replay
                     continue;
                 }
                 alive++;
-                Ghost.Pose p = g.PoseAt(t);
                 bool followed = g == Follow;
+                Ghost.Pose p = followed ? followPose : poses[g.Index];
+                if (followed && pov)
+                {
+                    // (its weapon stays put on screen, shake and all, as a viewmodel does)
+                    p.Eye = camPos;
+                    p.Look = camRot;
+                }
                 bool featured = followed || g.IsBest;
                 renderer.DrawGhost(g, p, featured ? 0.85f : opacity, featured, followed && pov, weapons);
             }
             renderer.EndFrame();
             Alive = alive;
+
+            // The followed attempt's enemies and doors (nobody followed: the winner's, the run being celebrated).
+            if (world != null)
+            {
+                try
+                {
+                    world.Update(Following ? Follow : Best, t);
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogError("showing the replay's world (off for the rest of this replay; the ghosts still play): " + e);
+                    world.Dispose();
+                    world = null;
+                }
+            }
 
             for (int i = FirstEndingAfter(byEnd, t - 0.6f); i < byEnd.Length && byEnd[i].Duration <= t; i++)
             {
