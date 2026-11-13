@@ -294,7 +294,7 @@ namespace UltraAttempts.Recording
             clock = Time.timeAsDouble;
             cameraSteps = 0;
             ownSteps = 0;
-            world.Begin(current, Settings.RecordWorld.Value);
+            world.Begin(current, Settings.World.Value != WorldDetail.Off);
             last = Capture(nm);
             Emit(nm, last, current, 1f);
             nextTick = interval;

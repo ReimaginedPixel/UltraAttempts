@@ -3,3 +3,4 @@ obj/
 tests/**/bin/
 tests/**/obj/
 tests/InGameTest/out/
+.claude/

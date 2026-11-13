@@ -36,6 +36,17 @@ namespace UltraAttempts
         Auto,
     }
 
+    internal enum WorldDetail
+    {
+        // Only V1.
+        Off,
+        // V1, the enemies around it and the doors.
+        Enemies,
+        // Everything that moves: also projectiles, coins, rockets, cannonballs, nails, explosions, beams,
+        // physics props, gibs and moving platforms. Heavy (bigger recordings, slower to load).
+        Everything,
+    }
+
     internal enum GhostModel
     {
         // V1 itself (the platformer secret level's third-person V1), animated.
@@ -58,7 +69,7 @@ namespace UltraAttempts
         public static ConfigEntry<bool> Record;
         public static ConfigEntry<int> SampleRate;
         public static ConfigEntry<bool> RecordWeapons;
-        public static ConfigEntry<bool> RecordWorld;
+        public static ConfigEntry<WorldDetail> World;
         public static ConfigEntry<bool> ContinueRunsAcrossVisits;
         public static ConfigEntry<int> KeepRunsPerLevel;
         public static ConfigEntry<bool> ShowAttemptCounter;
@@ -78,6 +89,9 @@ namespace UltraAttempts
         public static ConfigEntry<GhostModel> Model;
         public static ConfigEntry<int> AnimatedGhosts;
         public static ConfigEntry<bool> ShowWorld;
+        public static ConfigEntry<bool> OverlayWorlds;
+        public static ConfigEntry<float> OverlayOpacity;
+        private static ConfigEntry<int> configVersion;
         public static ConfigEntry<float> CameraSmoothing;
         public static ConfigEntry<bool> CameraShake;
         public static ConfigEntry<int> MaxGhosts;
@@ -96,8 +110,8 @@ namespace UltraAttempts
                 new ConfigDescription("Samples per second. Replays are interpolated between them; 60 is smooth even through your eyes while sliding.", new AcceptableValueRange<int>(10, 60)));
             RecordWeapons = config.Bind("Recording", "RecordWeapons", true,
                 "Also record which weapon you hold (and its variant), when you shoot and when you punch, to show on the ghosts.");
-            RecordWorld = config.Bind("Recording", "RecordWorld", true,
-                "Also record the enemies around you (where they are, their animations, when they die) and the doors you open, to show them when a replay follows that attempt.");
+            World = config.Bind("Recording", "WorldDetail", WorldDetail.Everything,
+                "How much of the level each attempt records, to play it back with the attempt: Off (only V1), Enemies (the enemies around you, animated, and the doors), Everything (also every projectile, coin, rocket, cannonball, nail, explosion, beam, physics prop, gib and moving platform: much bigger recordings).");
             ContinueRunsAcrossVisits = config.Bind("Recording", "ContinueRunsAcrossVisits", true,
                 "Leaving a level before beating it keeps its run going: the attempts next time count on from there (like Geometry Dash). Off: every visit is a new run.");
             KeepRunsPerLevel = config.Bind("Recording", "KeepRunsPerLevel", 30,
@@ -135,7 +149,22 @@ namespace UltraAttempts
             CameraSmoothing = config.Bind("Replay", "CameraSmoothing", 0.05f,
                 new ConfigDescription("Seconds of smoothing on the camera when seeing through an attempt's eyes (0: none, exactly as recorded).", new AcceptableValueRange<float>(0f, 0.5f)));
             CameraShake = config.Bind("Replay", "CameraShake", false,
-                "Through an attempt's eyes: keep the screen shake it had (off: steadier).");
+                "Through an attempt's eyes: shake when it gets hurt, as the game does (scaled by the game's own screen shake setting). Off: steady.");
+            OverlayWorlds = config.Bind("Replay", "OverlayWorlds", true,
+                "With WorldDetail = Everything: every other attempt's world plays too, see-through in its colour, over the one you follow (its own enemies, projectiles, props...).");
+            OverlayOpacity = config.Bind("Replay", "OverlayOpacity", 0.18f,
+                new ConfigDescription("How solid the other attempts' worlds are.", new AcceptableValueRange<float>(0.02f, 1f)));
+
+            // 1.0 sampled at 30 a second, which is jumpy through an attempt's eyes: move old configs up to 60.
+            configVersion = config.Bind("Internal", "ConfigVersion", 1, "(UltraAttempts' own bookkeeping: leave it.)");
+            if (configVersion.Value < 2)
+            {
+                if (SampleRate.Value == 30)
+                {
+                    SampleRate.Value = 60;
+                }
+                configVersion.Value = 2;
+            }
             MaxGhosts = config.Bind("Replay", "MaxGhosts", 2000,
                 "Most attempts in one replay (the newest are kept, and every finish). 0: no limit.");
             MinShotSeconds = config.Bind("Replay", "MinShotSeconds", 0.75f,

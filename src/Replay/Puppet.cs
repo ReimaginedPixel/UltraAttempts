@@ -103,6 +103,8 @@ namespace UltraAttempts.Replay
                 animator.applyRootMotion = false;
                 animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
                 animator.updateMode = AnimatorUpdateMode.UnscaledTime;  // (the level is frozen during a replay)
+                animator.fireEvents = false;   // (the scripts its animation events call were stripped)
+                animator.logWarnings = false;
             }
             copy.transform.SetParent(parent, false);
             copy.SetActive(true);
