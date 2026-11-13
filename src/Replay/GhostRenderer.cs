@@ -128,6 +128,16 @@ namespace UltraAttempts.Replay
             return line;
         }
 
+        // Once a frame, around that frame's DrawGhost calls (t: the replay's time). Model ghosts hand out
+        // and take back their animated copies here.
+        public void BeginFrame(float t)
+        {
+        }
+
+        public void EndFrame()
+        {
+        }
+
         private void Draw(Mesh mesh, Matrix4x4 matrix, Color color, Material material = null)
         {
             block.SetColor(colorId, color);

@@ -45,6 +45,82 @@ namespace UltraAttempts.Recording
         Up = 2,
         // A new checkpoint reached.
         Checkpoint = 3,
+        // A door opened (B = 1) or closed (B = 0). A: index into DoorPaths. At sample 0 there is one
+        // for every door in the level, with its state when the attempt started.
+        Door = 4,
+    }
+
+    // One enemy an attempt met: where it was, how it was turned, which animation it was in, from when it
+    // showed up until it died (or the attempt ended). Sample k lines up with attempt sample
+    // Start + k * RawAttempt.EnemyStride.
+    public sealed class EnemyTrack
+    {
+        public int Id;              // unique within the attempt
+        public int Type = -1;       // (int)EnemyType, -1 if unknown
+        public string Name = "";    // its GameObject's name, without "(Clone)"
+        public float Scale = 1f;    // its uniform scale (lossyScale.y)
+        public int Start;           // the attempt sample its first sample lines up with
+        public bool Died;           // ended because it died (else it was still around when the attempt ended, or vanished)
+
+        public int Count;
+        public int[] PosX = new int[16], PosY = new int[16], PosZ = new int[16];               // centimetres
+        public short[] RotX = new short[16], RotY = new short[16], RotZ = new short[16], RotW = new short[16];  // * 32767, w >= 0
+        public int[] Anim = new int[16];            // its Animator's layer-0 state fullPathHash (0: no animator)
+        public ushort[] AnimTime = new ushort[16];  // normalized time in that state * 65535 (looping states wrapped, others clamped to 1)
+        public byte[] Health = new byte[16];        // health relative to when it showed up (255: untouched)
+
+        public void Add(int px, int py, int pz, short rx, short ry, short rz, short rw, int anim, ushort animTime, byte health)
+        {
+            if (Count == PosX.Length)
+            {
+                Reserve(Count * 2);
+            }
+            PosX[Count] = px;
+            PosY[Count] = py;
+            PosZ[Count] = pz;
+            RotX[Count] = rx;
+            RotY[Count] = ry;
+            RotZ[Count] = rz;
+            RotW[Count] = rw;
+            Anim[Count] = anim;
+            AnimTime[Count] = animTime;
+            Health[Count] = health;
+            Count++;
+        }
+
+        public void Reserve(int capacity)
+        {
+            if (capacity <= PosX.Length)
+            {
+                return;
+            }
+            Array.Resize(ref PosX, capacity);
+            Array.Resize(ref PosY, capacity);
+            Array.Resize(ref PosZ, capacity);
+            Array.Resize(ref RotX, capacity);
+            Array.Resize(ref RotY, capacity);
+            Array.Resize(ref RotZ, capacity);
+            Array.Resize(ref RotW, capacity);
+            Array.Resize(ref Anim, capacity);
+            Array.Resize(ref AnimTime, capacity);
+            Array.Resize(ref Health, capacity);
+        }
+
+        public EnemyTrack Clone()
+        {
+            var copy = (EnemyTrack)MemberwiseClone();
+            copy.PosX = (int[])PosX.Clone();
+            copy.PosY = (int[])PosY.Clone();
+            copy.PosZ = (int[])PosZ.Clone();
+            copy.RotX = (short[])RotX.Clone();
+            copy.RotY = (short[])RotY.Clone();
+            copy.RotZ = (short[])RotZ.Clone();
+            copy.RotW = (short[])RotW.Clone();
+            copy.Anim = (int[])Anim.Clone();
+            copy.AnimTime = (ushort[])AnimTime.Clone();
+            copy.Health = (byte[])Health.Clone();
+            return copy;
+        }
     }
 
     public struct AttemptEvent
@@ -83,6 +159,12 @@ namespace UltraAttempts.Recording
 
         public List<AttemptEvent> Events = new List<AttemptEvent>();
         public List<string> WeaponNames = new List<string>();
+
+        // Enemies are sampled every EnemyStride attempt samples.
+        public int EnemyStride = 2;
+        public List<EnemyTrack> Enemies = new List<EnemyTrack>();
+        // Doors, by Game.PathOf (EventKind.Door's A indexes this).
+        public List<string> DoorPaths = new List<string>();
 
         public float Duration => Count <= 1 ? 0f : (Count - 1) / (float)SampleRate;
 
@@ -127,6 +209,17 @@ namespace UltraAttempts.Recording
             Array.Resize(ref Hp, capacity);
         }
 
+        public int AddDoorPath(string path)
+        {
+            int index = DoorPaths.IndexOf(path);
+            if (index < 0)
+            {
+                index = DoorPaths.Count;
+                DoorPaths.Add(path);
+            }
+            return index;
+        }
+
         public int AddWeaponName(string name)
         {
             int index = WeaponNames.IndexOf(name);
@@ -157,6 +250,8 @@ namespace UltraAttempts.Recording
             copy.Hp = Trim(Hp);
             copy.Events = new List<AttemptEvent>(Events);
             copy.WeaponNames = new List<string>(WeaponNames);
+            copy.Enemies = Enemies.ConvertAll(e => e.Clone());
+            copy.DoorPaths = new List<string>(DoorPaths);
             return copy;
         }
 

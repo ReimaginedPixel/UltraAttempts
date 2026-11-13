@@ -1,6 +1,9 @@
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UltraAttempts.Recording;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace UltraAttempts
 {
@@ -95,6 +98,75 @@ namespace UltraAttempts
             }
             return level;
         }
+
+        // A level object's place in the scene, to find it again in a later visit: each step is its name
+        // (without "(Clone)") and which of the same-named siblings it is. Checkpoints swap rooms for
+        // clones of themselves, which keeps these the same.
+        public static string PathOf(Transform t)
+        {
+            var steps = new List<string>();
+            for (; t != null; t = t.parent)
+            {
+                string name = CleanName(t.name);
+                int ordinal = 0;
+                if (t.parent != null)
+                {
+                    for (int i = 0; i < t.GetSiblingIndex(); i++)
+                    {
+                        if (CleanName(t.parent.GetChild(i).name) == name)
+                        {
+                            ordinal++;
+                        }
+                    }
+                }
+                else
+                {
+                    foreach (GameObject root in t.gameObject.scene.GetRootGameObjects())
+                    {
+                        if (root.transform == t)
+                        {
+                            break;
+                        }
+                        if (CleanName(root.name) == name)
+                        {
+                            ordinal++;
+                        }
+                    }
+                }
+                steps.Add(name + "#" + ordinal);
+            }
+            steps.Reverse();
+            return string.Join("/", steps);
+        }
+
+        // The object at a PathOf path in the current scene (the same-named one in the same place,
+        // else an active one of that name, else any), or null.
+        public static Transform FindByPath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return null;
+            }
+            string[] steps = path.Split('/');
+            IEnumerable<Transform> level = SceneManager.GetActiveScene().GetRootGameObjects().Select(g => g.transform);
+            Transform found = null;
+            foreach (string step in steps)
+            {
+                int hash = step.LastIndexOf('#');
+                string name = hash >= 0 ? step.Substring(0, hash) : step;
+                int.TryParse(hash >= 0 ? step.Substring(hash + 1) : "0", out int ordinal);
+                List<Transform> named = level.Where(c => CleanName(c.name) == name).ToList();
+                if (named.Count == 0)
+                {
+                    return null;
+                }
+                found = ordinal < named.Count ? named[ordinal] : named.FirstOrDefault(c => c.gameObject.activeInHierarchy) ?? named[0];
+                level = found.Cast<Transform>();
+            }
+            return found;
+        }
+
+        public static string CleanName(string name) => (name ?? "").Replace("(Clone)", "").Trim();
 
         public static void HudMessage(string message)
         {

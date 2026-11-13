@@ -1183,6 +1183,7 @@ namespace UltraAttempts.Replay
             bool weapons = Settings.ShowWeapons.Value;
             bool pov = Following && firstPerson && !Blending;
             int alive = 0;
+            renderer.BeginFrame(t);
             foreach (Ghost g in Ghosts)
             {
                 if (!g.AliveAt(t))
@@ -1195,6 +1196,7 @@ namespace UltraAttempts.Replay
                 bool featured = followed || g.IsBest;
                 renderer.DrawGhost(g, p, featured ? 0.85f : opacity, featured, followed && pov, weapons);
             }
+            renderer.EndFrame();
             Alive = alive;
 
             for (int i = FirstEndingAfter(byEnd, t - 0.6f); i < byEnd.Length && byEnd[i].Duration <= t; i++)

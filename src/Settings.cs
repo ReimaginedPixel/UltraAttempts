@@ -36,6 +36,16 @@ namespace UltraAttempts
         Auto,
     }
 
+    internal enum GhostModel
+    {
+        // V1 itself (the platformer secret level's third-person V1), animated.
+        V1,
+        // V2 (the enemy's model), animated.
+        V2,
+        // The plain crystal ghosts.
+        Crystal,
+    }
+
     internal enum GhostColors
     {
         Rainbow,
@@ -48,6 +58,7 @@ namespace UltraAttempts
         public static ConfigEntry<bool> Record;
         public static ConfigEntry<int> SampleRate;
         public static ConfigEntry<bool> RecordWeapons;
+        public static ConfigEntry<bool> RecordWorld;
         public static ConfigEntry<bool> ContinueRunsAcrossVisits;
         public static ConfigEntry<int> KeepRunsPerLevel;
         public static ConfigEntry<bool> ShowAttemptCounter;
@@ -64,6 +75,11 @@ namespace UltraAttempts
         public static ConfigEntry<float> Volume;
         public static ConfigEntry<float> GhostOpacity;
         public static ConfigEntry<GhostColors> Colors;
+        public static ConfigEntry<GhostModel> Model;
+        public static ConfigEntry<int> AnimatedGhosts;
+        public static ConfigEntry<bool> ShowWorld;
+        public static ConfigEntry<float> CameraSmoothing;
+        public static ConfigEntry<bool> CameraShake;
         public static ConfigEntry<int> MaxGhosts;
         public static ConfigEntry<float> MinShotSeconds;
         public static ConfigEntry<bool> RevealRooms;
@@ -76,10 +92,12 @@ namespace UltraAttempts
         {
             Record = config.Bind("Recording", "Enabled", true,
                 "Record every attempt at every level (not a cheat: nothing about the game changes, and ranks still count).");
-            SampleRate = config.Bind("Recording", "SampleRate", 30,
-                new ConfigDescription("Samples per second. Replays are interpolated between them; 30 is smooth, 60 is exact.", new AcceptableValueRange<int>(10, 60)));
+            SampleRate = config.Bind("Recording", "SampleRate", 60,
+                new ConfigDescription("Samples per second. Replays are interpolated between them; 60 is smooth even through your eyes while sliding.", new AcceptableValueRange<int>(10, 60)));
             RecordWeapons = config.Bind("Recording", "RecordWeapons", true,
                 "Also record which weapon you hold (and its variant), when you shoot and when you punch, to show on the ghosts.");
+            RecordWorld = config.Bind("Recording", "RecordWorld", true,
+                "Also record the enemies around you (where they are, their animations, when they die) and the doors you open, to show them when a replay follows that attempt.");
             ContinueRunsAcrossVisits = config.Bind("Recording", "ContinueRunsAcrossVisits", true,
                 "Leaving a level before beating it keeps its run going: the attempts next time count on from there (like Geometry Dash). Off: every visit is a new run.");
             KeepRunsPerLevel = config.Bind("Recording", "KeepRunsPerLevel", 30,
@@ -108,6 +126,16 @@ namespace UltraAttempts
             GhostOpacity = config.Bind("Replay", "GhostOpacity", 0.35f,
                 new ConfigDescription("How solid the ghosts are (the one the camera follows and the winner are always clearer).", new AcceptableValueRange<float>(0.05f, 1f)));
             Colors = config.Bind("Replay", "GhostColors", GhostColors.Rainbow, "How ghosts are coloured (the winner is always gold).");
+            Model = config.Bind("Replay", "GhostModel", GhostModel.V1,
+                "What the ghosts look like: V1 (animated), V2 (animated), or Crystal. If a model can't be loaded, the next one down is used.");
+            AnimatedGhosts = config.Bind("Replay", "AnimatedGhosts", 24,
+                new ConfigDescription("How many ghosts get a fully animated model at once (the followed one, the winner and the nearest). The rest use pre-posed copies, which are much cheaper.", new AcceptableValueRange<int>(1, 200)));
+            ShowWorld = config.Bind("Replay", "ShowWorld", true,
+                "Following an attempt: show its enemies (where they were, animated, dying when it killed them) and its doors opening and closing. The level's own frozen enemies hide meanwhile.");
+            CameraSmoothing = config.Bind("Replay", "CameraSmoothing", 0.05f,
+                new ConfigDescription("Seconds of smoothing on the camera when seeing through an attempt's eyes (0: none, exactly as recorded).", new AcceptableValueRange<float>(0f, 0.5f)));
+            CameraShake = config.Bind("Replay", "CameraShake", false,
+                "Through an attempt's eyes: keep the screen shake it had (off: steadier).");
             MaxGhosts = config.Bind("Replay", "MaxGhosts", 2000,
                 "Most attempts in one replay (the newest are kept, and every finish). 0: no limit.");
             MinShotSeconds = config.Bind("Replay", "MinShotSeconds", 0.75f,
