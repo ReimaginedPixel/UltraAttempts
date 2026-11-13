@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The recording format on its own (no Unity, no game): dotnet run -c Release -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\Recording\RawAttempt.cs" Link="Recording\RawAttempt.cs" />
+    <Compile Include="..\..\src\Recording\AttemptCodec.cs" Link="Recording\AttemptCodec.cs" />
+    <Compile Include="..\..\src\Recording\SessionFile.cs" Link="Recording\SessionFile.cs" />
+    <Compile Include="..\..\src\Recording\SessionStore.cs" Link="Recording\SessionStore.cs" />
+  </ItemGroup>
+</Project>

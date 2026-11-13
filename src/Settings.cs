@@ -1,0 +1,123 @@
+using BepInEx.Configuration;
+using UnityEngine.InputSystem;
+
+namespace UltraAttempts
+{
+    internal enum ReplayCamera
+    {
+        // Through the eyes of whichever attempt dies next (each shot at least MinShotSeconds long).
+        NextToDie,
+        // Through the eyes of the winning attempt (the fastest finish; else the one that lived longest).
+        BestRun,
+        // Above and behind every attempt still alive, framing them all.
+        Overview,
+        // Fly anywhere: WASD, mouse, Q/E down/up, Shift fast.
+        FreeCam,
+    }
+
+    internal enum ReplaySource
+    {
+        // This run if it has any attempts, else the last finished run.
+        Auto,
+        // Every attempt since the level was last beaten (including the one you're on).
+        ThisRun,
+        // The last time you beat the level: every attempt it took.
+        LastFinishedRun,
+        // Every attempt ever recorded at this level and difficulty.
+        Everything,
+    }
+
+    internal enum LevelEndReplay
+    {
+        Off,
+        // On the results screen, press the watch key to see every attempt.
+        Prompt,
+        // Continuing from the results screen plays every attempt first, then loads the next level.
+        Auto,
+    }
+
+    internal enum GhostColors
+    {
+        Rainbow,
+        // Red for the first attempts through to green for the last.
+        Progress,
+    }
+
+    internal static class Settings
+    {
+        public static ConfigEntry<bool> Record;
+        public static ConfigEntry<int> SampleRate;
+        public static ConfigEntry<bool> RecordWeapons;
+        public static ConfigEntry<bool> ContinueRunsAcrossVisits;
+        public static ConfigEntry<int> KeepRunsPerLevel;
+        public static ConfigEntry<bool> ShowAttemptCounter;
+        public static ConfigEntry<string> Folder;
+
+        public static ConfigEntry<ReplayCamera> Camera;
+        public static ConfigEntry<bool> FirstPerson;
+        public static ConfigEntry<ReplaySource> Source;
+        public static ConfigEntry<LevelEndReplay> AtLevelEnd;
+        public static ConfigEntry<int> MinAttemptsAtLevelEnd;
+        public static ConfigEntry<bool> ShowWeapons;
+        public static ConfigEntry<bool> DeathMarkers;
+        public static ConfigEntry<bool> Sounds;
+        public static ConfigEntry<float> Volume;
+        public static ConfigEntry<float> GhostOpacity;
+        public static ConfigEntry<GhostColors> Colors;
+        public static ConfigEntry<int> MaxGhosts;
+        public static ConfigEntry<float> MinShotSeconds;
+        public static ConfigEntry<bool> RevealRooms;
+        public static ConfigEntry<bool> Loop;
+
+        public static ConfigEntry<Key> WatchKey;
+        public static ConfigEntry<Key> ExitKey;
+
+        public static void Bind(ConfigFile config)
+        {
+            Record = config.Bind("Recording", "Enabled", true,
+                "Record every attempt at every level (not a cheat: nothing about the game changes, and ranks still count).");
+            SampleRate = config.Bind("Recording", "SampleRate", 30,
+                new ConfigDescription("Samples per second. Replays are interpolated between them; 30 is smooth, 60 is exact.", new AcceptableValueRange<int>(10, 60)));
+            RecordWeapons = config.Bind("Recording", "RecordWeapons", true,
+                "Also record which weapon you hold (and its variant), when you shoot and when you punch, to show on the ghosts.");
+            ContinueRunsAcrossVisits = config.Bind("Recording", "ContinueRunsAcrossVisits", true,
+                "Leaving a level before beating it keeps its run going: the attempts next time count on from there (like Geometry Dash). Off: every visit is a new run.");
+            KeepRunsPerLevel = config.Bind("Recording", "KeepRunsPerLevel", 30,
+                "How many finished runs to keep per level and difficulty (the oldest are deleted). 0 keeps them all.");
+            ShowAttemptCounter = config.Bind("Recording", "ShowAttemptCounter", true,
+                "Show \"ATTEMPT 37\" for a moment at the start of each attempt.");
+            Folder = config.Bind("Recording", "Folder", "",
+                "Where recordings go. Empty: BepInEx\\UltraAttempts next to the game.");
+
+            Camera = config.Bind("Replay", "Camera", ReplayCamera.NextToDie,
+                "The camera a replay starts with (Tab cycles them during the replay; also in the cheat menu).");
+            FirstPerson = config.Bind("Replay", "FirstPerson", true,
+                "Following an attempt: through its eyes (on) or from behind it (off). V switches during the replay.");
+            Source = config.Bind("Replay", "Attempts", ReplaySource.Auto,
+                "Which attempts a replay shows (also in the cheat menu).");
+            AtLevelEnd = config.Bind("Replay", "AtLevelEnd", LevelEndReplay.Auto,
+                "After beating a level (no cheats needed then, it's over): Auto plays every attempt before the next level loads; Prompt waits for the watch key on the results screen; Off only replays from the cheat menu.");
+            MinAttemptsAtLevelEnd = config.Bind("Replay", "MinAttemptsAtLevelEnd", 2,
+                "Only replay at the level's end if it took at least this many attempts.");
+            ShowWeapons = config.Bind("Replay", "ShowWeapons", true,
+                "Show each ghost's weapon (in its variant's colour), its shots and its punches.");
+            DeathMarkers = config.Bind("Replay", "DeathMarkers", true,
+                "Leave a red marker where each attempt died (M toggles during the replay).");
+            Sounds = config.Bind("Replay", "Sounds", true, "A pop for each death, a chime for each finish.");
+            Volume = config.Bind("Replay", "Volume", 0.6f, new ConfigDescription("", new AcceptableValueRange<float>(0f, 1f)));
+            GhostOpacity = config.Bind("Replay", "GhostOpacity", 0.35f,
+                new ConfigDescription("How solid the ghosts are (the one the camera follows and the winner are always clearer).", new AcceptableValueRange<float>(0.05f, 1f)));
+            Colors = config.Bind("Replay", "GhostColors", GhostColors.Rainbow, "How ghosts are coloured (the winner is always gold).");
+            MaxGhosts = config.Bind("Replay", "MaxGhosts", 2000,
+                "Most attempts in one replay (the newest are kept, and every finish). 0: no limit.");
+            MinShotSeconds = config.Bind("Replay", "MinShotSeconds", 0.75f,
+                new ConfigDescription("Next-to-die camera: skip attempts that die sooner than this after a cut, so it doesn't flicker through the early deaths.", new AcceptableValueRange<float>(0f, 5f)));
+            RevealRooms = config.Bind("Replay", "RevealRooms", true,
+                "Bring back the rooms ULTRAKILL switched off behind closed doors while a replay plays, so ghosts aren't running through the void. They switch off again after.");
+            Loop = config.Bind("Replay", "Loop", false, "Start over when the replay ends (instead of returning to the game).");
+
+            WatchKey = config.Bind("Keys", "Watch", Key.F8, "On the results screen: watch every attempt.");
+            ExitKey = config.Bind("Keys", "Exit", Key.Backspace, "Leave a replay (Escape works too).");
+        }
+    }
+}
