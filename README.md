@@ -130,6 +130,21 @@ dotnet run -c Release --project tests\RecordingTests   # the recording format: e
 dotnet run -c Release --project tests\PatchCheck       # every hook into ULTRAKILL finds its method in the real game
 ```
 
+And in the game itself (ULTRAKILL closed; Git Bash):
+
+```
+dotnet build -c Release tests/InGameTest/UltraAttempts.SelfTest.csproj
+tests/InGameTest/run-selftest.sh
+```
+
+ULTRAKILL starts in a window and plays itself for a few minutes:
+- In 0-1 it dies 4 times and restarts, then beats the level.
+- It checks the run that was recorded, and that continuing plays every attempt before 0-2 loads.
+- It tries every camera.
+- In 0-2 it watches a replay from the cheat menu, then checks the game goes back to normal.
+
+It saves screenshots and `selftest.log` into `tests/InGameTest/out`, then quits. Your saves, preferences and window settings are backed up first and put back exactly after, and the test's recordings stay out of yours.
+
 The code:
 - `src/Recording`: `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit). `RawAttempt.cs` is an attempt's samples. `AttemptCodec.cs` packs them. `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
 - `src/Replay`: `ReplayDirector.cs` freezes the level, loads the attempts on a background task, runs the clock, the cameras and the controls, then puts everything back. `GhostRenderer.cs` draws the ghosts, bursts, markers, tracers and trails, from meshes made in code, onto ULTRAKILL's camera (so they get its pixelation and palette). `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.

@@ -1,11 +1,14 @@
 using System;
 using System.IO;
+using System.Runtime.CompilerServices;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
 using UltraAttempts.Recording;
 using UltraAttempts.Replay;
 using UnityEngine;
+
+[assembly: InternalsVisibleTo("UltraAttempts.SelfTest")]
 
 namespace UltraAttempts
 {
@@ -34,6 +37,11 @@ namespace UltraAttempts
             RecordingsRoot = string.IsNullOrWhiteSpace(Settings.Folder.Value)
                 ? Path.Combine(Paths.BepInExRootPath, "UltraAttempts")
                 : Environment.ExpandEnvironmentVariables(Settings.Folder.Value.Trim());
+            string testFolder = Environment.GetEnvironmentVariable("ULTRAATTEMPTS_FOLDER");
+            if (!string.IsNullOrWhiteSpace(testFolder))
+            {
+                RecordingsRoot = testFolder;  // (the in-game self-test keeps its recordings apart)
+            }
             Store = new SessionStore(RecordingsRoot, message => Log.LogWarning(message))
             {
                 ContinueAcrossVisits = Settings.ContinueRunsAcrossVisits.Value,

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An in-game test of UltraAttempts: a second plugin that plays ULTRAKILL by itself (dies, restarts,
+       beats a level, watches the replays) and checks what happens. Does nothing unless the game is
+       started with ULTRAATTEMPTS_SELFTEST set; see run-selftest.sh. Build the plugin first. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>UltraAttempts.SelfTest</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GameDir Condition="'$(GameDir)' == '' And Exists('D:\SteamLibrary\steamapps\common\ULTRAKILL')">D:\SteamLibrary\steamapps\common\ULTRAKILL</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\ULTRAKILL</GameDir>
+    <Managed>$(GameDir)\ULTRAKILL_Data\Managed</Managed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="UltraAttempts" HintPath="..\..\bin\Release\netstandard2.1\UltraAttempts.dll" Private="false" />
+    <Reference Include="BepInEx" HintPath="$(GameDir)\BepInEx\core\BepInEx.dll" Private="false" />
+    <Reference Include="Assembly-CSharp" HintPath="$(Managed)\Assembly-CSharp.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(Managed)\UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(Managed)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(Managed)\UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="UnityEngine.ScreenCaptureModule" HintPath="$(Managed)\UnityEngine.ScreenCaptureModule.dll" Private="false" />
+  </ItemGroup>
+</Project>
