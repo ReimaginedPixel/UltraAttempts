@@ -7,8 +7,8 @@ using UnityEngine.InputSystem;
 namespace UltraAttempts
 {
     // Where UltraAttempts hooks into ULTRAKILL. Recording only listens (scene loads, restarts, the results
-    // screen, the camera, doors); the replay takes over the camera, Escape, and the results screen's
-    // "continue".
+    // screen, the camera, doors, explosions, beams, breakables); the replay takes over the camera, Escape, and
+    // the results screen's "continue".
     [HarmonyPatch]
     internal static class Patches
     {
@@ -40,6 +40,27 @@ namespace UltraAttempts
 
         [HarmonyPatch(typeof(Door), nameof(Door.Close)), HarmonyPostfix]
         private static void DoorClosed(Door __instance) => Recorder.Instance?.OnDoor(__instance, Replaying);
+
+        // WorldDetail = Everything: explosions (once they know their size; its colour before it turns white),
+        // hitscan beams (once they've hit), lasting beams, and breakables just before they break.
+        [HarmonyPatch(typeof(Explosion), "Start"), HarmonyPostfix]
+        private static void Exploded(Explosion __instance, Color ___materialColor) => Recorder.Instance?.OnExplosion(__instance, ___materialColor, Replaying);
+
+        [HarmonyPatch(typeof(RevolverBeam), "Start"), HarmonyPostfix]
+        private static void BeamShot(RevolverBeam __instance) => Recorder.Instance?.OnBeam(__instance, Replaying);
+
+        [HarmonyPatch(typeof(ContinuousBeam), "Start"), HarmonyPostfix]
+        private static void BeamOn(ContinuousBeam __instance) => Recorder.Instance?.OnContinuousBeam(__instance, Replaying);
+
+        [HarmonyPatch(typeof(Breakable), nameof(Breakable.Break), typeof(float)), HarmonyPrefix]
+        private static void Breaking(Breakable __instance, float damage)
+        {
+            // (Break returns early unless this breaks it)
+            if (__instance != null && !__instance.unbreakable && !__instance.broken && __instance.durability <= damage)
+            {
+                Recorder.Instance?.OnBreak(__instance, Replaying);
+            }
+        }
 
         // After ULTRAKILL has put its camera on V1 for this frame: the recording's sample (body and eyes
         // read at the same moment), then the replay's camera.

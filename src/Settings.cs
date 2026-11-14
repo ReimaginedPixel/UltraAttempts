@@ -151,9 +151,9 @@ namespace UltraAttempts
             CameraShake = config.Bind("Replay", "CameraShake", false,
                 "Through an attempt's eyes: shake when it gets hurt, as the game does (scaled by the game's own screen shake setting). Off: steady.");
             OverlayWorlds = config.Bind("Replay", "OverlayWorlds", true,
-                "With WorldDetail = Everything: every other attempt's world plays too, see-through in its colour, over the one you follow (its own enemies, projectiles, props...).");
+                "Every other attempt still alive plays its world too, see-through in its colour, over the one you follow: its enemies, and (recorded with WorldDetail = Everything) its projectiles, props, explosions and beams. The nearest 20 at once. O switches it during a replay.");
             OverlayOpacity = config.Bind("Replay", "OverlayOpacity", 0.18f,
-                new ConfigDescription("How solid the other attempts' worlds are.", new AcceptableValueRange<float>(0.02f, 1f)));
+                new ConfigDescription("How solid the other attempts' worlds are (a little less each when many are shown at once).", new AcceptableValueRange<float>(0.02f, 1f)));
 
             // 1.0 sampled at 30 a second, which is jumpy through an attempt's eyes: move old configs up to 60.
             configVersion = config.Bind("Internal", "ConfigVersion", 1, "(UltraAttempts' own bookkeeping: leave it.)");

@@ -44,11 +44,19 @@ namespace UltraAttempts.Replay
         private UpChange[] ups = Array.Empty<UpChange>();
         private int[] snaps = Array.Empty<int>();       // the samples it teleported into, in order
 
-        // The world it saw (recordings from before 1.1 have none): the enemies it met and its doors.
-        public EnemyPath[] Enemies = Array.Empty<EnemyPath>();
+        // The world it saw (recordings from before 1.1 have none): its doors, always here; the enemies it met
+        // and everything else (WorldDetail = Everything), in World while the WorldCache keeps it (else read
+        // again from Source when it's wanted).
         public string[] DoorPaths = Array.Empty<string>();
         public DoorChange[] Doors = Array.Empty<DoorChange>();    // in order; sample 0 has every door's start
         public Dictionary<int, int> MostAtOnce = NoEnemies;        // enemy type -> most of it around at once
+        public int EnemyCount;
+        public int ThingCount;
+        public bool HasEverything;                                 // things, explosions or beams recorded
+        public GhostWorld World;
+        public WorldSource Source;
+        public bool WorldFailed;
+        public int WorldUsed;
         private float[] kills = Array.Empty<float>();             // when each enemy it met died, in order
 
         private static readonly Dictionary<int, int> NoEnemies = new Dictionary<int, int>();
@@ -89,9 +97,12 @@ namespace UltraAttempts.Replay
 
         public bool Finished => EndReason == AttemptEnd.Finish;
 
-        public bool HasEnemies => Enemies.Length > 0;
+        public bool HasEnemies => EnemyCount > 0;
 
-        public bool HasWorld => Enemies.Length > 0 || Doors.Length > 0;
+        public bool HasWorld => EnemyCount > 0 || Doors.Length > 0 || HasEverything;
+
+        // Something in World to decode (doors are always here).
+        public bool HasWorldData => EnemyCount > 0 || HasEverything;
 
         public bool AliveAt(float t) => t >= 0f && t < Duration;
 
@@ -131,7 +142,8 @@ namespace UltraAttempts.Replay
             Array.Copy(steadied, eye, n);
         }
 
-        // Off the main thread: only plain maths here (no Unity calls).
+        // Off the main thread: only plain maths here (no Unity calls). Its world comes decoded (the loader lets
+        // go of all but the newest few; the WorldCache reads them again from Source as they're wanted).
         public static Ghost FromRaw(RawAttempt raw, SessionHeader header)
         {
             int n = raw.Count;
@@ -198,7 +210,16 @@ namespace UltraAttempts.Replay
             g.WeaponNames = raw.WeaponNames.ToArray();
             g.Doors = InOrder(doors);
             g.DoorPaths = raw.DoorPaths != null ? raw.DoorPaths.ToArray() : Array.Empty<string>();
-            ReadEnemies(g, raw);
+            if (raw.SourcePath != null)
+            {
+                g.Source = new WorldSource { Path = raw.SourcePath, Offset = raw.SourceOffset, Length = raw.SourceLength };
+            }
+            if ((raw.Enemies != null && raw.Enemies.Count > 0) || raw.HasThings)
+            {
+                GhostWorld world = GhostWorld.FromRaw(raw, g.Rate);
+                Summarize(g, world);
+                g.World = world;
+            }
             return g;
         }
 
@@ -219,38 +240,30 @@ namespace UltraAttempts.Replay
             return sorted;
         }
 
-        private static void ReadEnemies(Ghost g, RawAttempt raw)
+        // What's kept of its world while the world itself isn't: when its enemies died (the HUD's kills), how
+        // many of each kind were about at once (the replay's copies), whether there's more than enemies.
+        private static void Summarize(Ghost g, GhostWorld world)
         {
-            if (raw.Enemies == null || raw.Enemies.Count == 0)
-            {
-                return;
-            }
-            int stride = Math.Max(1, raw.EnemyStride);
-            var enemies = new List<EnemyPath>(raw.Enemies.Count);
             var kills = new List<float>();
-            foreach (EnemyTrack track in raw.Enemies)
+            foreach (EnemyPath e in world.Enemies)
             {
-                EnemyPath e = EnemyPath.FromTrack(track, stride, g.Rate);
-                if (e == null)
-                {
-                    continue;
-                }
-                enemies.Add(e);
                 if (e.Died)
                 {
                     kills.Add(e.To);
                 }
             }
             kills.Sort();
-            g.Enemies = enemies.ToArray();
             g.kills = kills.ToArray();
-            g.MostAtOnce = MostOfEachAtOnce(enemies);
+            g.EnemyCount = world.Enemies.Length;
+            g.ThingCount = world.Things.Length;
+            g.HasEverything = world.Things.Length > 0 || world.Moments.Length > 0 || world.Breaks.Length > 0;
+            g.MostAtOnce = world.Enemies.Length > 0 ? MostOfEachAtOnce(world.Enemies) : NoEnemies;
         }
 
         // For each type of enemy, the most of it around at the same time (how many copies a replay needs).
-        private static Dictionary<int, int> MostOfEachAtOnce(List<EnemyPath> enemies)
+        private static Dictionary<int, int> MostOfEachAtOnce(EnemyPath[] enemies)
         {
-            var edges = new List<(float time, int type, int step)>(enemies.Count * 2);
+            var edges = new List<(float time, int type, int step)>(enemies.Length * 2);
             foreach (EnemyPath e in enemies)
             {
                 edges.Add((e.From, e.Type, 1));

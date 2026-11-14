@@ -42,6 +42,7 @@ As with any of ULTRAKILL's cheats, turning cheats on mid-level means that level 
 | **Space** | Pause (at the end: watch again) |
 | **R** | From the start |
 | **M** | Death markers on/off |
+| **O** | Other attempts' worlds on/off |
 | **H** | Hide the HUD |
 | **Esc** / **Backspace** | Leave |
 
@@ -73,7 +74,20 @@ Following an attempt (next to die, best run, or Q/E) shows its world as it was:
 
 In the overview and free cam, the winner's world shows. Everything goes back exactly as it was when the replay ends.
 
-With **WorldDetail** = Everything (the default), each attempt also records everything else that moves: projectiles, coins, rockets, cannonballs, nails, explosions, beams, physics props, gibs and moving platforms. Every other attempt's world then plays at the same time, see-through in that attempt's colour, so all your attempts' fights happen on top of each other (**OverlayWorlds**, **OverlayOpacity**).
+With **WorldDetail** = Everything (the default), each attempt also records everything else that moves or happens near V1, within 150 m:
+- everyone's projectiles (bullets, pellets, rockets, grenades, cannonballs, nails, sawblades, coins, harpoons)
+- gibs, debris and shells, and props that get knocked about
+- the level's moving platforms, elevators, pistons, trams and rotating doors
+- every explosion, beam and breakable that breaks
+
+When you follow that attempt:
+- Its projectiles and debris are drawn in their real materials.
+- The level's platforms and props move as they did for it, and go back afterwards.
+- Its explosions and beams play, and what it broke breaks.
+
+The other attempts' worlds play at the same time: the 20 nearest living attempts, each see-through in its own colour, with their enemies, props, projectiles, explosions and beams. So all your attempts' fights happen on top of each other.
+- **O** turns them on and off, and the HUD says how many are showing.
+- **OverlayWorlds** and **OverlayOpacity** set this in the config. Recordings with only enemies overlay their enemies.
 
 ULTRAKILL switches rooms off behind doors that close behind you. While a replay plays, those rooms come back (as if you'd walked back through the door), so earlier attempts aren't running through nothing. They switch off again after.
 
@@ -122,7 +136,7 @@ With **WorldDetail** above Off, each attempt also records:
 - each enemy around (where it is, which way it faces, its animation, its health, when it dies)
 - every door's state at the start, then each open and close
 
-With Everything, it also records whatever else moves (see above).
+With Everything, it also records whatever else moves (see above): each thing with what it looks like (its meshes and materials by name, found again among the game's loaded assets later, or a coloured box) and where it was, plus explosions, beams and breakables as events. A busy fight adds about 40 KB a minute. Worlds are read back from the run file only when a replay needs them, so long runs still load quickly.
 
 Recordings are kept small. Each channel (positions, rotations, ...) is stored on its own. Positions and rotations are stored as the difference from where the two samples before predict them to be: moving at a steady speed or turning at a steady rate leaves nothing to store. Everything goes in as zigzag varints, and the whole attempt is deflated.
 - **Non-stop movement:** about 14 KB a minute at 60 Hz.
@@ -214,18 +228,18 @@ It saves screenshots and `selftest.log` into `tests/InGameTest/out`, then quits.
 The code:
 - `src/Recording`:
   - `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit).
-  - `WorldRecorder.cs` records the enemies, doors and everything else.
+  - `WorldRecorder.cs` records the enemies and doors, and `ThingRecorder.cs` everything else.
   - `RawAttempt.cs` is an attempt's samples, and `AttemptCodec.cs` packs them.
   - `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
 - `src/Replay`:
   - `ReplayDirector.cs` freezes the level, loads the attempts on a background task, runs the clock, the cameras and the controls, then puts everything back. `Ghost.cs` is one attempt ready to play: smooth curves through its samples, its world.
   - `GhostRenderer.cs`, `GhostModels.cs` and `WeaponModels.cs` draw the V1 ghosts, their weapons, bursts, markers, tracers and trails onto ULTRAKILL's camera, so they get its pixelation and palette.
-  - `WorldPlayback.cs` plays the followed attempt's enemies and doors.
+  - `WorldPlayback.cs` plays the followed attempt's enemies and doors. `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
   - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
 - `src/AttemptsMenu.cs` is the ULTRAATTEMPTS menu on the pause screen.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:
-  - Recording: scene loads, restarts, the results screen, the camera, and doors opening and closing.
+  - Recording: scene loads, restarts, the results screen, the camera, doors opening and closing, explosions, beams and breakables.
   - The replay: the camera, Escape, and the results screen's continue.
   - Doors switching rooms off.
 

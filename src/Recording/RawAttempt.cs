@@ -132,6 +132,137 @@ namespace UltraAttempts.Recording
         public int C;
     }
 
+    // What sort of thing a ThingTrack is (for drawing and the log; the look says what it looked like).
+    public enum ThingKind : byte
+    {
+        Other = 0,
+        Projectile = 1,   // anyone's: bullets, rockets, grenades, cannonballs, nails, sawblades, coins, harpoons...
+        Debris = 2,       // gibs, chunks, shells: spawned physics bits
+        Prop = 3,         // a level object knocked about (a crate, a barrel)
+        Mover = 4,        // a level object that moves by itself (platforms, elevators, pistons, trams, big doors)
+    }
+
+    // What a tracked thing looked like, so a later game (another launch) can draw it again: each part's mesh and
+    // materials by name (the mesh's vertex count tells same-named ones apart), where the part sits on the thing;
+    // and, for when none of that can be found, its bounds (in its own space) and colour, drawn as a box.
+    public sealed class ThingLook
+    {
+        public string Name = "";
+        public List<LookPart> Parts = new List<LookPart>();
+        public float CenterX, CenterY, CenterZ;
+        public float SizeX = 0.3f, SizeY = 0.3f, SizeZ = 0.3f;
+        public uint Color = 0xFFFFFFFFu;  // RGBA, 8 bits each (R highest)
+    }
+
+    public sealed class LookPart
+    {
+        public string Mesh = "";
+        public int Vertices;
+        public string[] Materials = Array.Empty<string>();
+        public float PX, PY, PZ;                          // in the thing's own space (its transform, scale taken out)
+        public float RX, RY, RZ, RW = 1f;
+        public float SX = 1f, SY = 1f, SZ = 1f;
+    }
+
+    // One thing an attempt saw move (WorldDetail = Everything): projectiles, debris, props, movers. Kept as keys: a
+    // key every world step while it moves, none while it stays put; it goes straight from one key to the next, and
+    // a rest ends with its last key again where it started moving from. It's there from its first key (a level
+    // object: all along) until End. Spawned things are drawn from their look; level objects (Path >= 0) are found
+    // again and moved for real.
+    public sealed class ThingTrack
+    {
+        public int Id;
+        public ThingKind Kind;
+        public int Look = -1;       // index into RawAttempt.Looks (-1: none)
+        public int Path = -1;       // index into RawAttempt.ThingPaths: a level object (-1: spawned)
+        public float ScaleX = 1f, ScaleY = 1f, ScaleZ = 1f;  // its lossyScale when first seen
+        public int End;             // the last attempt sample it was there at
+        public bool Gone;           // went away (destroyed, switched off, out of range) before the attempt ended
+
+        public int Count;
+        public int[] Sample = new int[8];             // the attempt sample of each key (increasing)
+        public int[] PosX = new int[8], PosY = new int[8], PosZ = new int[8];               // centimetres
+        public short[] RotX = new short[8], RotY = new short[8], RotZ = new short[8], RotW = new short[8];  // * 32767, w >= 0
+        public ushort[] Scale = new ushort[8];        // its size relative to ScaleX..Z, * 1000
+
+        public int First => Count > 0 ? Sample[0] : End;
+
+        public void Add(int sample, int px, int py, int pz, short rx, short ry, short rz, short rw, ushort scale)
+        {
+            if (Count == Sample.Length)
+            {
+                Reserve(Count * 2);
+            }
+            Sample[Count] = sample;
+            PosX[Count] = px;
+            PosY[Count] = py;
+            PosZ[Count] = pz;
+            RotX[Count] = rx;
+            RotY[Count] = ry;
+            RotZ[Count] = rz;
+            RotW[Count] = rw;
+            Scale[Count] = scale;
+            Count++;
+        }
+
+        public void Reserve(int capacity)
+        {
+            if (capacity <= Sample.Length)
+            {
+                return;
+            }
+            Array.Resize(ref Sample, capacity);
+            Array.Resize(ref PosX, capacity);
+            Array.Resize(ref PosY, capacity);
+            Array.Resize(ref PosZ, capacity);
+            Array.Resize(ref RotX, capacity);
+            Array.Resize(ref RotY, capacity);
+            Array.Resize(ref RotZ, capacity);
+            Array.Resize(ref RotW, capacity);
+            Array.Resize(ref Scale, capacity);
+        }
+
+        public ThingTrack Clone()
+        {
+            var copy = (ThingTrack)MemberwiseClone();
+            copy.Sample = (int[])Sample.Clone();
+            copy.PosX = (int[])PosX.Clone();
+            copy.PosY = (int[])PosY.Clone();
+            copy.PosZ = (int[])PosZ.Clone();
+            copy.RotX = (short[])RotX.Clone();
+            copy.RotY = (short[])RotY.Clone();
+            copy.RotZ = (short[])RotZ.Clone();
+            copy.RotW = (short[])RotW.Clone();
+            copy.Scale = (ushort[])Scale.Clone();
+            return copy;
+        }
+    }
+
+    public enum WorldEventKind : byte
+    {
+        // At X, Y, Z: Size its radius at the end (mm), Life how long it took to get there (ms), Color its own.
+        Explosion = 1,
+        // From X, Y, Z to ToX, ToY, ToZ: Size its width (mm), Life how long it fades (ms), Color its own.
+        Beam = 2,
+        // A breakable broke: Look, Path, where it was (X, Y, Z) and how it was turned (Rot); Size about how big (mm).
+        Break = 3,
+    }
+
+    // Something that happened at one moment (WorldDetail = Everything).
+    public struct WorldEvent
+    {
+        public int Sample;
+        public WorldEventKind Kind;
+        public int X, Y, Z;           // centimetres
+        public int ToX, ToY, ToZ;     // centimetres
+        public int Size;              // millimetres
+        public int Life;              // milliseconds
+        public uint Color;            // RGBA
+        public int Look;              // -1: none
+        public int Path;              // -1: none
+        public short RotX, RotY, RotZ, RotW;
+    }
+
     // One attempt as recorded: fixed-rate samples, already quantized (centimetres, rotation * 32767),
     // kept as one array per channel (which is also how they're stored, for compression). Sample i is
     // at i / SampleRate seconds into the attempt.
@@ -166,7 +297,21 @@ namespace UltraAttempts.Recording
         // Doors, by Game.PathOf (EventKind.Door's A indexes this).
         public List<string> DoorPaths = new List<string>();
 
+        // Everything else that moved or happened (WorldDetail = Everything; format 3).
+        public List<ThingLook> Looks = new List<ThingLook>();
+        public List<string> ThingPaths = new List<string>();
+        public List<ThingTrack> Things = new List<ThingTrack>();
+        public List<WorldEvent> WorldEvents = new List<WorldEvent>();
+
+        // Where this attempt's bytes are in its run file (set when read from one): its world can be read again
+        // from there later instead of being kept in memory. Not saved.
+        public string SourcePath;
+        public long SourceOffset;
+        public int SourceLength;
+
         public float Duration => Count <= 1 ? 0f : (Count - 1) / (float)SampleRate;
+
+        public bool HasThings => Things.Count > 0 || WorldEvents.Count > 0;
 
         public void Add(int px, int py, int pz, short ex, short ey, short ez, short rx, short ry, short rz, short rw, byte flags, byte hp)
         {
@@ -220,6 +365,17 @@ namespace UltraAttempts.Recording
             return index;
         }
 
+        public int AddThingPath(string path)
+        {
+            int index = ThingPaths.IndexOf(path);
+            if (index < 0)
+            {
+                index = ThingPaths.Count;
+                ThingPaths.Add(path);
+            }
+            return index;
+        }
+
         public int AddWeaponName(string name)
         {
             int index = WeaponNames.IndexOf(name);
@@ -252,6 +408,11 @@ namespace UltraAttempts.Recording
             copy.WeaponNames = new List<string>(WeaponNames);
             copy.Enemies = Enemies.ConvertAll(e => e.Clone());
             copy.DoorPaths = new List<string>(DoorPaths);
+            copy.Looks = new List<ThingLook>(Looks);  // (looks never change once made)
+            copy.ThingPaths = new List<string>(ThingPaths);
+            copy.Things = Things.ConvertAll(t => t.Clone());
+            copy.WorldEvents = new List<WorldEvent>(WorldEvents);
+            copy.SourcePath = null;
             return copy;
         }
 

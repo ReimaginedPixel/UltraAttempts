@@ -37,6 +37,8 @@ namespace UltraAttempts.Replay
         private const float EndPadding = 0.75f;
         private const float SummarySeconds = 4f;
         private const float ChaseLag = 0.12f;
+        private const float ChaseLift = 1.1f;      // the chase camera's pivot, this far above the eyes
+        private const float ChaseClose = 2.6f;     // nearer than this, the followed V1 goes see-through
         private static readonly float[] Speeds = { 0.1f, 0.25f, 0.5f, 1f, 2f, 4f, 8f };
         private static readonly string[] Months = { "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC" };
 
@@ -68,6 +70,9 @@ namespace UltraAttempts.Replay
         public int RunDays { get; private set; }   // how many days the run shown (the best one's) took
         public Camera Camera => cc != null ? cc.cam : null;
         public float Flash { get; set; }
+        public string Notice { get; private set; } = "";   // a line shown for a moment (a key's setting changed)
+        public float NoticeAt { get; private set; } = -100f;
+        public int OverlaysShown { get; private set; }     // other attempts' worlds drawn this frame
         public bool Following => Follow != null && (mode == ReplayCamera.NextToDie || mode == ReplayCamera.BestRun || manual != null);
 
         private readonly ReplayHud hud = new ReplayHud();
@@ -108,7 +113,7 @@ namespace UltraAttempts.Replay
 
         private float chaseYaw;
         private float chasePitch = 12f;
-        private float chaseDistance = 6f;
+        private float chaseDistance = 7.5f;
         private Quaternion chaseHeading = Quaternion.identity;
         private float chaseReach;
         private bool chaseFresh = true;
@@ -133,6 +138,12 @@ namespace UltraAttempts.Replay
         private GameState state;
         private GhostRenderer renderer;
         private WorldPlayback world;
+        private ThingPlayback things;
+        private WorldCache cache;
+        private readonly List<Ghost> overlaid = new List<Ghost>();   // the other attempts whose worlds show now (nearest first)
+        private readonly List<Ghost> overlayPicks = new List<Ghost>();
+        private float overlaysPickedAt = -10f;
+        private bool overlaysBroken;
         private ReplaySounds sounds;
         private CameraController cc;
         private Vector3 savedLocalPos;
@@ -151,9 +162,12 @@ namespace UltraAttempts.Replay
             public string Error;
         }
 
+        private readonly Comparison<Ghost> byDistance;
+
         public ReplayDirector()
         {
             Instance = this;
+            byDistance = (a, b) => FromCamera(a).CompareTo(FromCamera(b));
         }
 
         // ---------------------------------------------------------------- starting and stopping
@@ -277,6 +291,11 @@ namespace UltraAttempts.Replay
             environment = LayerMaskDefaults.Get(LMD.Environment);
             renderer = new GhostRenderer(cc.cam, root.transform);
             world = new WorldPlayback(cc.cam, root.transform);
+            things = new ThingPlayback(cc.cam);
+            cache = new WorldCache();
+            overlaid.Clear();
+            overlaysPickedAt = -10f;
+            overlaysBroken = false;
             sounds = new ReplaySounds(root);
             var prefs = Game.Get<PrefsManager>();
             screenShake = prefs != null ? Mathf.Clamp(prefs.GetFloat("screenShake", 1f), 0f, 2f) : 1f;
@@ -321,7 +340,16 @@ namespace UltraAttempts.Replay
             Origin was = origin;
             try
             {
-                // (first, while the doors and the level's enemies are all still there to put back)
+                // (first, while the doors, the level's objects and its enemies are all still there to put back)
+                things?.Dispose();
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("putting the level's objects back after a replay: " + e);
+            }
+            things = null;
+            try
+            {
                 world?.Dispose();
             }
             catch (Exception e)
@@ -329,6 +357,9 @@ namespace UltraAttempts.Replay
                 Plugin.Log.LogError("putting the level back after a replay: " + e);
             }
             world = null;
+            cache?.Dispose();
+            cache = null;
+            overlaid.Clear();
             try
             {
                 RoomReveal.Hide(revealed);
@@ -428,7 +459,11 @@ namespace UltraAttempts.Replay
 
         // ---------------------------------------------------------------- loading
 
-        // Off the main thread: wait for recordings still being written, read the runs, decode.
+        // Worlds kept decoded from loading (the newest attempts'); the rest are read again when they're wanted.
+        private const int WorldsKeptFromLoading = 16;
+
+        // Off the main thread: wait for recordings still being written, read the runs (one attempt at a time),
+        // decode.
         private static LoadResult Load(LevelInfo level, ReplaySource source, string thisRun, int runAttempts, RawAttempt snapshot, int maxGhosts)
         {
             var result = new LoadResult();
@@ -439,7 +474,7 @@ namespace UltraAttempts.Replay
                 {
                     source = runAttempts > 0 || snapshot != null ? ReplaySource.ThisRun : ReplaySource.LastFinishedRun;
                 }
-                var runs = new List<SessionData>();
+                var runs = new List<string>();
                 List<string> files = SessionStore.RunFiles(level.Folder);
                 switch (source)
                 {
@@ -447,7 +482,7 @@ namespace UltraAttempts.Replay
                         result.Label = "THIS RUN";
                         if (thisRun != null && File.Exists(thisRun))
                         {
-                            runs.Add(SessionFile.Load(thisRun, Plugin.Log.LogWarning));
+                            runs.Add(thisRun);
                         }
                         break;
                     case ReplaySource.LastFinishedRun:
@@ -457,51 +492,64 @@ namespace UltraAttempts.Replay
                         {
                             if (SessionFile.Scan(files[i]).Complete)
                             {
-                                runs.Add(SessionFile.Load(files[i], Plugin.Log.LogWarning));
+                                runs.Add(files[i]);
                                 break;
                             }
                         }
                         break;
                     case ReplaySource.Everything:
                         result.Label = "EVERY ATTEMPT";
-                        foreach (string file in files)
-                        {
-                            try
-                            {
-                                runs.Add(SessionFile.Load(file, Plugin.Log.LogWarning));
-                            }
-                            catch (Exception e)
-                            {
-                                Plugin.Log.LogWarning($"skipping {Path.GetFileName(file)}: {e.Message}");
-                            }
-                        }
+                        runs.AddRange(files);
                         break;
                 }
 
                 int order = 0;
                 bool renumber = source == ReplaySource.Everything;
                 int snapshotRun = runs.Count;  // (the run being played: its file's, once it has one)
+                var withWorlds = new Queue<Ghost>();
                 for (int r = 0; r < runs.Count; r++)
                 {
-                    SessionData run = runs[r];
-                    if (SamePath(run.Info?.Path, thisRun))
+                    if (SamePath(runs[r], thisRun))
                     {
                         snapshotRun = r;
                     }
-                    foreach (RawAttempt raw in run.Attempts)
+                    SessionHeader header = null;
+                    int run = r;
+                    try
                     {
-                        if (raw.Count < 2)
+                        header = SessionFile.Scan(runs[r]).Header;
+                        SessionFile.Read(runs[r], raw =>
                         {
-                            continue;
-                        }
-                        Ghost g = Ghost.FromRaw(raw, run.Info.Header);
-                        g.Order = order++;
-                        g.Run = r;
-                        if (renumber)
-                        {
-                            g.Number = g.Order + 1;
-                        }
-                        result.Ghosts.Add(g);
+                            if (raw.Count < 2)
+                            {
+                                return;
+                            }
+                            Ghost g = Ghost.FromRaw(raw, header);
+                            g.Order = order++;
+                            g.Run = run;
+                            if (renumber)
+                            {
+                                g.Number = g.Order + 1;
+                            }
+                            result.Ghosts.Add(g);
+                            if (g.World != null)
+                            {
+                                // (only the newest few stay decoded: they're the likeliest to be watched first)
+                                withWorlds.Enqueue(g);
+                                if (withWorlds.Count > WorldsKeptFromLoading)
+                                {
+                                    Ghost old = withWorlds.Dequeue();
+                                    if (old.Source != null)
+                                    {
+                                        old.World = null;
+                                    }
+                                }
+                            }
+                        }, Plugin.Log.LogWarning);
+                    }
+                    catch (Exception e)
+                    {
+                        Plugin.Log.LogWarning($"skipping {Path.GetFileName(runs[r])}: {e.Message}");
                     }
                 }
                 if (snapshot != null && snapshot.Count >= 2)
@@ -666,6 +714,10 @@ namespace UltraAttempts.Replay
             }
             Histogram = bins;
             SourceLabel = result.Label;
+            foreach (Ghost g in Ghosts)
+            {
+                cache.Adopt(g);
+            }
             try
             {
                 world.Prepare(Ghosts);
@@ -676,10 +728,22 @@ namespace UltraAttempts.Replay
                 world.Dispose();
                 world = null;
             }
+            try
+            {
+                things.Prepare(Ghosts);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("getting the replay's things ready (none this time; the ghosts still play): " + e);
+                things.Dispose();
+                things = null;
+            }
             State = Phase.Playing;
             BeginBlend();
+            int withWorlds = Ghosts.Count(g => g.HasWorldData), everything = Ghosts.Count(g => g.HasEverything);
             Plugin.Log.LogInfo($"replaying {count} attempts at {LevelName} ({result.Label.ToLowerInvariant()}), {total:0.0} s"
-                + (RunDays > 1 ? $", a run of {RunDays} days" : ""));
+                + (RunDays > 1 ? $", a run of {RunDays} days" : "")
+                + $"; {withWorlds} with their enemies, {everything} with everything else ({Ghosts.Sum(g => g.ThingCount)} things), {cache.Held} worlds decoded up front");
         }
 
         // ---------------------------------------------------------------- every frame
@@ -744,6 +808,7 @@ namespace UltraAttempts.Replay
                     return;
                 }
             }
+            cache?.Update();
             if (t > before && t - before < 0.5f)
             {
                 Happenings(before, t);
@@ -869,6 +934,7 @@ namespace UltraAttempts.Replay
             manual = null;
             Follow = null;
             chaseFresh = true;
+            overlaysPickedAt = -10f;
             renderer.ClearTracers();
             BeginBlend();
         }
@@ -939,6 +1005,13 @@ namespace UltraAttempts.Replay
             {
                 markers = !markers;
             }
+            if (kb.oKey.wasPressedThisFrame)
+            {
+                Settings.OverlayWorlds.Value = !Settings.OverlayWorlds.Value;
+                overlaysPickedAt = -10f;
+                Notice = Settings.OverlayWorlds.Value ? "OTHER ATTEMPTS' WORLDS: ON" : "OTHER ATTEMPTS' WORLDS: OFF";
+                NoticeAt = Time.unscaledTime;
+            }
             if (kb.leftArrowKey.wasPressedThisFrame)
             {
                 Seek(shift ? -1f : -5f);
@@ -973,7 +1046,7 @@ namespace UltraAttempts.Replay
             {
                 chaseYaw += look.x;
                 chasePitch = Mathf.Clamp(chasePitch - look.y, -30f, 75f);
-                chaseDistance = Mathf.Clamp(chaseDistance * Mathf.Pow(0.87f, scroll), 2f, 40f);
+                chaseDistance = Mathf.Clamp(chaseDistance * Mathf.Pow(0.87f, scroll), 3f, 40f);
             }
             else if (!Following && mode == ReplayCamera.Overview)
             {
@@ -1033,6 +1106,7 @@ namespace UltraAttempts.Replay
             t = Mathf.Clamp(t + seconds, 0f, total);
             summaryAt = -1f;
             chaseFresh = true;
+            overlaysPickedAt = -10f;
             if (Follow != null && autoPicked)
             {
                 Follow = null;
@@ -1209,6 +1283,8 @@ namespace UltraAttempts.Replay
 
         // Behind and above the followed attempt. Its mouse turns it at once; the camera swings round after
         // it (rather than jerking with every flick), pulls in at once in front of a wall, and eases back out.
+        // It turns about a point above its head, so the V1 (3.3 m tall, and solid) sits low in the picture
+        // rather than in front of what it's heading for.
         private void Chase(in Ghost.Pose p, float dt, out Vector3 pos, out Quaternion rot)
         {
             Vector3 forward = Vector3.ProjectOnPlane(p.Look * Vector3.forward, p.Up);
@@ -1220,10 +1296,11 @@ namespace UltraAttempts.Replay
             chaseHeading = chaseFresh ? heading : Quaternion.Slerp(chaseHeading, heading, 1f - Mathf.Exp(-dt / ChaseLag));
             rot = chaseHeading * Quaternion.AngleAxis(chaseYaw, Vector3.up) * Quaternion.AngleAxis(chasePitch, Vector3.right);
             Vector3 back = rot * Vector3.back;
-            float reach = Vector3.Distance(p.Eye, Collide(p.Eye, p.Eye + back * chaseDistance));
+            Vector3 pivot = Collide(p.Eye, p.Eye + p.Up * ChaseLift);
+            float reach = Vector3.Distance(pivot, Collide(pivot, pivot + back * chaseDistance));
             chaseReach = chaseFresh || reach < chaseReach ? reach : Mathf.Lerp(chaseReach, reach, 1f - Mathf.Exp(-dt * 5f));
             chaseFresh = false;
-            pos = p.Eye + back * chaseReach;
+            pos = pivot + back * chaseReach;
         }
 
         // ULTRAKILL's own shake when it got hurt (damage / 20, wearing off at 3 a second), times the game's
@@ -1396,12 +1473,14 @@ namespace UltraAttempts.Replay
                 {
                     var flags = (SampleFlags)g.Flags[k];
                     Ghost.WeaponChange w = g.WeaponAt(k);
-                    bool shot = (flags & SampleFlags.Shot) != 0 || (w.Slot == 3 && (flags & SampleFlags.FireHeld) != 0 && k % 2 == 0);
-                    if (shot && w.Slot > 0)
+                    // (the nailgun held down: 15 tracers a second, whatever the sample rate)
+                    bool shot = (flags & SampleFlags.Shot) != 0 || (w.Slot == 3 && (flags & SampleFlags.FireHeld) != 0 && k % Mathf.Max(1, g.Rate / 15) == 0);
+                    if (shot && w.Slot > 0 && !ShotsShown(g))
                     {
+                        // (aimed from the eyes, where the game aims; drawn from the gun in its hand)
                         Vector3 eye = g.Body[k] + g.Eye[k];
                         Vector3 dir = g.Look[k] * Vector3.forward;
-                        Vector3 muzzle = eye + g.Look[k] * new Vector3(0.42f, -0.3f, 0.9f);
+                        Vector3 muzzle = renderer.Muzzle(g, k, eye, g.Look[k]);
                         Vector3 end = Physics.Raycast(eye, dir, out RaycastHit hit, 90f, environment, QueryTriggerInteraction.Ignore) ? hit.point : eye + dir * 90f;
                         Color c = Color.Lerp(GhostRenderer.VariantColor(w.Variant), Color.white, 0.35f);
                         renderer.AddTracer(muzzle, end, c, now, 0.14f, 0.07f);
@@ -1422,7 +1501,9 @@ namespace UltraAttempts.Replay
         {
             float opacity = Settings.GhostOpacity.Value;
             bool weapons = Settings.ShowWeapons.Value;
-            bool pov = Following && firstPerson && !Blending;
+            // (inside its head once the cut's done, or nearly: the solid V1 isn't drawn round the camera)
+            bool pov = Following && firstPerson && (!Blending || (camPos - followPose.Eye).sqrMagnitude < 1.5f * 1.5f);
+            bool close = Following && !firstPerson && chaseReach < ChaseClose;
             int alive = 0;
             renderer.BeginFrame(t);
             foreach (Ghost g in Ghosts)
@@ -1441,17 +1522,28 @@ namespace UltraAttempts.Replay
                     p.Look = camRot;
                 }
                 bool featured = followed || g.IsBest;
-                renderer.DrawGhost(g, p, featured ? 0.85f : opacity, featured, followed && pov, weapons);
+                float alpha = featured ? 0.85f : opacity;
+                if (followed && close)
+                {
+                    // (the camera's backed up against it by a wall: see-through, not a wall of V1 in the way)
+                    featured = false;
+                    alpha = opacity * 0.7f;
+                }
+                renderer.DrawGhost(g, p, alpha, featured, followed && pov, weapons);
             }
             renderer.EndFrame();
             Alive = alive;
 
-            // The followed attempt's enemies and doors (nobody followed: the winner's, the run being celebrated).
+            // The followed attempt's world (nobody followed: the winner's, the run being celebrated), and the
+            // other attempts' see-through over it.
+            Ghost shown = Following ? Follow : Best;
+            GhostWorld shownWorld = cache?.Get(shown);
+            Prefetch();
             if (world != null)
             {
                 try
                 {
-                    world.Update(Following ? Follow : Best, t);
+                    world.Update(shown, shownWorld, t);
                 }
                 catch (Exception e)
                 {
@@ -1460,6 +1552,20 @@ namespace UltraAttempts.Replay
                     world = null;
                 }
             }
+            if (things != null)
+            {
+                try
+                {
+                    things.Update(shown, shownWorld, t);
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogError("showing the replay's things (off for the rest of this replay; the ghosts still play): " + e);
+                    things.Dispose();
+                    things = null;
+                }
+            }
+            DrawOverlays(shown);
 
             for (int i = FirstEndingAfter(byEnd, t - 0.6f); i < byEnd.Length && byEnd[i].Duration <= t; i++)
             {
@@ -1491,6 +1597,115 @@ namespace UltraAttempts.Replay
             {
                 renderer.SetTrail(false, null, 0f, 0f, Color.white);
             }
+        }
+
+        // ---------------------------------------------------------------- the attempts' worlds
+
+        private const int MaxOverlays = 20;
+        private const int OverlayDraws = 1800;
+        private const float OverlayPickSeconds = 0.5f;
+
+        // The worlds wanted soon, read ahead: the winner's, and the next few to die (the next-to-die camera
+        // cuts to them).
+        private void Prefetch()
+        {
+            if (cache == null)
+            {
+                return;
+            }
+            cache.Want(Best);
+            cache.Want(Follow);
+            for (int i = FirstEndingAfter(dying, t), n = 0; i < dying.Length && n < 3; i++, n++)
+            {
+                cache.Want(dying[i]);
+            }
+        }
+
+        // Every other attempt still alive (the nearest MaxOverlays): its world see-through in its colour.
+        private void DrawOverlays(Ghost shown)
+        {
+            OverlaysShown = 0;
+            if (!Settings.OverlayWorlds.Value || overlaysBroken || cache == null || (world == null && things == null))
+            {
+                return;
+            }
+            if (Time.unscaledTime - overlaysPickedAt > OverlayPickSeconds)
+            {
+                PickOverlays(shown);
+            }
+            // (each a little fainter the more there are: twenty copies of one enemy stacked at the level's start
+            // would add up to a solid block)
+            float opacity = Settings.OverlayOpacity.Value * Mathf.Min(1f, 3f / Mathf.Sqrt(Mathf.Max(1, overlaid.Count)));
+            int budget = OverlayDraws;
+            foreach (Ghost g in overlaid)
+            {
+                if (g == shown || !g.AliveAt(t))
+                {
+                    continue;
+                }
+                GhostWorld w = cache.Get(g);
+                if (w == null)
+                {
+                    continue;
+                }
+                OverlaysShown++;
+                var tint = new Color(g.Color.r, g.Color.g, g.Color.b, opacity);
+                try
+                {
+                    world?.DrawOverlay(g, w, tint, t, ref budget);
+                    if (things != null && budget > 0)
+                    {
+                        things.DrawOverlay(g, w, tint, t, ref budget);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogError("showing the other attempts' worlds (off for the rest of this replay): " + e);
+                    overlaysBroken = true;
+                    return;
+                }
+                if (budget <= 0)
+                {
+                    things?.OverlayCut();
+                    break;
+                }
+            }
+        }
+
+        private void PickOverlays(Ghost shown)
+        {
+            overlaysPickedAt = Time.unscaledTime;
+            overlayPicks.Clear();
+            foreach (Ghost g in Ghosts)
+            {
+                if (g != shown && g.HasWorldData && !g.WorldFailed && g.AliveAt(t))
+                {
+                    overlayPicks.Add(g);
+                }
+            }
+            if (overlayPicks.Count > MaxOverlays)
+            {
+                overlayPicks.Sort(byDistance);
+            }
+            overlaid.Clear();
+            for (int i = 0; i < overlayPicks.Count && i < MaxOverlays; i++)
+            {
+                overlaid.Add(overlayPicks[i]);
+                cache.Want(overlayPicks[i]);
+            }
+        }
+
+        private float FromCamera(Ghost g) => g.Index >= 0 && g.Index < poses.Length ? (poses[g.Index].Body - camPos).sqrMagnitude : float.MaxValue;
+
+        // Whether a ghost's own shots show as they really were (its projectiles and beams, drawn with its
+        // world): then it needs no tracers of its own.
+        private bool ShotsShown(Ghost g)
+        {
+            if (things == null || g.World == null || !g.HasEverything)
+            {
+                return false;
+            }
+            return g == (Following ? Follow : Best) || (Settings.OverlayWorlds.Value && overlaid.Contains(g));
         }
     }
 }
