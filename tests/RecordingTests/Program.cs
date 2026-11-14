@@ -23,8 +23,12 @@ internal static class Program
         }
     }
 
-    private static int Main()
+    private static int Main(string[] args)
     {
+        if (args.Length > 0)
+        {
+            return Real(args[0]);
+        }
         string root = Path.Combine(Path.GetTempPath(), "UltraAttemptsTests-" + Guid.NewGuid().ToString("N"));
         try
         {
@@ -45,6 +49,64 @@ internal static class Program
             {
             }
         }
+        Console.WriteLine(failures == 0 ? "all passed" : failures + " failed");
+        return failures == 0 ? 0 : 1;
+    }
+
+    // dotnet run -c Release -- <folder>: reads every run in a recordings folder (a copy of yours) with
+    // this version: every attempt must decode. Also how shaky the recorded eyes are: the eyes' offset from
+    // the body should only change smoothly (sliding down, standing up), so big sample-to-sample changes
+    // in it are screen shake.
+    private static int Real(string folder)
+    {
+        string[] files = Directory.GetFiles(folder, "*" + SessionFile.Extension, SearchOption.AllDirectories);
+        Console.WriteLine($"{files.Length} runs in {folder}");
+        int attempts = 0, damaged = 0;
+        foreach (string file in files.OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var errors = new List<string>();
+            SessionData run;
+            try
+            {
+                run = SessionFile.Load(file, errors.Add);
+            }
+            catch (Exception e)
+            {
+                Check(false, $"{Path.GetRelativePath(folder, file)}: {e.Message}");
+                continue;
+            }
+            damaged += errors.Count;
+            attempts += run.Attempts.Count;
+            double seconds = run.Attempts.Sum(a => a.Duration);
+            long samples = 0, shaky = 0;
+            double jitter = 0;
+            foreach (RawAttempt a in run.Attempts)
+            {
+                for (int i = 2; i < a.Count; i++)
+                {
+                    // second difference of the eye offset, in cm
+                    double dx = a.EyeX[i] - 2 * a.EyeX[i - 1] + a.EyeX[i - 2];
+                    double dy = a.EyeY[i] - 2 * a.EyeY[i - 1] + a.EyeY[i - 2];
+                    double dz = a.EyeZ[i] - 2 * a.EyeZ[i - 1] + a.EyeZ[i - 2];
+                    double d = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                    jitter += d;
+                    samples++;
+                    if (d > 10)
+                    {
+                        shaky++;
+                    }
+                }
+            }
+            string versionInfo = run.Attempts.Count > 0 ? $"{run.Attempts[0].SampleRate} Hz" : "-";
+            Console.WriteLine($"  {Path.GetRelativePath(folder, file)}: {run.Attempts.Count} attempts{(run.Info.Complete ? ", won" : "")}, {seconds:0.0} s, {versionInfo}, " +
+                $"{new FileInfo(file).Length / Math.Max(seconds, 0.1):0} bytes/s, eye jitter {(samples > 0 ? jitter / samples : 0):0.0} cm/sample, {(samples > 0 ? 100.0 * shaky / samples : 0):0.0}% shaken (>10 cm)" +
+                $"{(run.Attempts.Any(a => a.Enemies.Count > 0) ? $", {run.Attempts.Sum(a => a.Enemies.Count)} enemy tracks" : "")}");
+            foreach (string error in errors)
+            {
+                Console.WriteLine("        " + error);
+            }
+        }
+        Check(damaged == 0, $"all {attempts} attempts decode ({damaged} damaged)");
         Console.WriteLine(failures == 0 ? "all passed" : failures + " failed");
         return failures == 0 ? 0 : 1;
     }

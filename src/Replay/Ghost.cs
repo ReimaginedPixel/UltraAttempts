@@ -95,6 +95,42 @@ namespace UltraAttempts.Replay
 
         public bool AliveAt(float t) => t >= 0f && t < Duration;
 
+        // The eyes' offset from the body only changes smoothly (sliding down, standing up), but 1.0
+        // recorded ULTRAKILL's screen shake into it: about 20 cm from one sample to the next in real runs.
+        // A median over +-radius samples takes the shake out and keeps the slides; recordings from 1.1 on
+        // (already steady) come through unchanged.
+        private static void Steady(Vector3[] eye, int radius)
+        {
+            int n = eye.Length;
+            if (n < 3)
+            {
+                return;
+            }
+            var window = new float[radius * 2 + 1];
+            var steadied = new Vector3[n];
+            for (int axis = 0; axis < 3; axis++)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    int from = Math.Max(0, i - radius), to = Math.Min(n - 1, i + radius), count = 0;
+                    for (int k = from; k <= to; k++)
+                    {
+                        float v = eye[k][axis];
+                        int j = count++;
+                        for (; j > 0 && window[j - 1] > v; j--)
+                        {
+                            window[j] = window[j - 1];
+                        }
+                        window[j] = v;
+                    }
+                    Vector3 s = steadied[i];
+                    s[axis] = window[count / 2];
+                    steadied[i] = s;
+                }
+            }
+            Array.Copy(steadied, eye, n);
+        }
+
         // Off the main thread: only plain maths here (no Unity calls).
         public static Ghost FromRaw(RawAttempt raw, SessionHeader header)
         {
@@ -135,6 +171,7 @@ namespace UltraAttempts.Replay
             Array.Copy(raw.Flags, g.Flags, n);
             Array.Copy(raw.Hp, g.Hp, n);
             g.snaps = snapped.ToArray();
+            Steady(g.Eye, Math.Max(1, g.Rate / 10));
 
             var weapons = new List<WeaponChange>();
             var upChanges = new List<UpChange>();
