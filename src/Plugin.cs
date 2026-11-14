@@ -66,6 +66,7 @@ namespace UltraAttempts
     {
         private Recorder recorder;
         private ReplayDirector director;
+        private readonly AttemptsMenu menu = new AttemptsMenu();
 
         private void Awake()
         {
@@ -84,6 +85,7 @@ namespace UltraAttempts
                 Plugin.Log.LogError("replay: " + e);
                 director.RequestExit();
             }
+            menu.Update();
         }
 
         private void LateUpdate()
@@ -102,6 +104,14 @@ namespace UltraAttempts
         private void OnGUI()
         {
             director.OnGUI();
+            try
+            {
+                menu.OnGUI();
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("menu: " + e);
+            }
             if (Event.current.type == EventType.Repaint && !director.Busy && Settings.ShowAttemptCounter.Value && recorder.Recording && !Game.Paused)
             {
                 ReplayHud.DrawBanner(recorder.BannerNumber, recorder.BannerShownAt);

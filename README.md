@@ -79,7 +79,9 @@ ULTRAKILL switches rooms off behind doors that close behind you. While a replay 
 
 ## Runs and attempts
 
-A **run** is every attempt at a level and difficulty from your first try until you beat it, so the attempt count goes up across deaths, checkpoint restarts and full restarts. Leaving a level before beating it keeps its run going: next time the attempts count on from there, like Geometry Dash. Beating the level ends the run, and the next attempt starts a new one at 1. **ATTEMPT 37** shows for a moment at the start of each attempt.
+Every attempt at a level and difficulty counts, like Geometry Dash's attempt counter: across deaths, checkpoint restarts, full restarts, leaving and coming back, game launches, and wins. **ATTEMPT 37** shows for a moment at the start of each attempt. The count only goes back to 1 when you reset it (see the menu below). Levels played with 1.0 count on from the attempts already recorded.
+
+A **run** is every attempt since you last beat the level (or reset its count). It's what a replay shows by default. Beating the level saves the run whether you watch it or not, and the next attempt starts a new run while the count carries on.
 
 What a replay shows (**Replay Attempts**):
 - **This run:** every attempt since the level was last beaten, including the one you're on right now (in white).
@@ -90,6 +92,21 @@ What a replay shows (**Replay Attempts**):
 Every attempt starts at the same moment in the replay: from the level's start, or from the checkpoint it respawned at.
 
 A run can take days. It carries on across game launches until the level is beaten, and attempts recorded by 1.0 carry on too. The replay shows which day each attempt was, and how many days the whole run took.
+
+## The ULTRAATTEMPTS menu
+
+Pause the game (or go to the main menu): an **ULTRAATTEMPTS** button sits in the top-left corner. It opens:
+- **This level:** its attempt count and how many since the last win. **RESET** (click twice) starts the count again at 1. The run in progress ends without a win, and every recording stays. **EXPORT** saves the level's runs to a zip.
+- **Settings:**
+  - **After beating a level:** play the attempts first, only if you press F8, or never (just save them).
+  - **What to record:** everything that moves, V1 with enemies and doors, or only V1.
+  - **Ghost model:** V1, V2 or crystals.
+  - The "ATTEMPT 37" banner, and recording itself, on or off.
+- **Every level:** each level's count, runs and wins, with **RESET** and **EXPORT** for each.
+- **EXPORT EVERYTHING**, **IMPORT** and **OPEN FOLDER.** Exports go in `BepInEx\UltraAttempts\Exports`. To import, put zips in `BepInEx\UltraAttempts\Import` and press IMPORT:
+  - Their runs join your levels; runs you already have are skipped.
+  - The zips move to `Import\Done`.
+  - Importing never changes a level's count.
 
 ## How it's recorded
 
@@ -112,7 +129,7 @@ Recordings are kept small. Each channel (positions, rotations, ...) is stored on
 - **With 10 enemies around and 30 doors:** about 32 KB a minute.
 - **Standing still next to an idling enemy:** about 200 bytes a minute. A run is one file, written on a background thread as each attempt ends, so dying never hitches the game. A crash can't corrupt a run: half-written attempts are cut off.
 
-Recordings go in `BepInEx\UltraAttempts\<level>\<difficulty>\`, one `.ukattempts` file per run. The newest 30 finished runs of each level are kept.
+Recordings go in `BepInEx\UltraAttempts\<level>\<difficulty>\`, one `.ukattempts` file per run, with the level's attempt count in `attempts.count`. The newest 30 finished runs of each level are kept. Deleting old ones never lowers the count.
 
 ## Settings
 
@@ -174,7 +191,7 @@ If ULTRAKILL isn't in `D:\SteamLibrary\steamapps\common\ULTRAKILL` or `C:\Progra
 Tests (no game needed for the first):
 
 ```
-dotnet run -c Release --project tests\RecordingTests   # the recording format: exact round trips, old versions, damage, runs, crashes, pruning, sizes
+dotnet run -c Release --project tests\RecordingTests   # the recording format: exact round trips, old versions, damage, runs, crashes, pruning, counting, reset, export/import, sizes
 dotnet run -c Release --project tests\RecordingTests -- "<a copy of BepInEx\UltraAttempts>"   # every real run decodes; how shaky its eyes are
 dotnet run -c Release --project tests\PatchCheck       # every hook into ULTRAKILL finds its method in the real game
 ```
@@ -206,6 +223,7 @@ The code:
   - `WorldPlayback.cs` plays the followed attempt's enemies and doors.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
   - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
+- `src/AttemptsMenu.cs` is the ULTRAATTEMPTS menu on the pause screen.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:
   - Recording: scene loads, restarts, the results screen, the camera, and doors opening and closing.
   - The replay: the camera, Escape, and the results screen's continue.

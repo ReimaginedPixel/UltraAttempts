@@ -53,6 +53,83 @@ internal static class Program
         return failures == 0 ? 0 : 1;
     }
 
+    // The attempt count (counting on across wins, reset back to 1, a 1.0 level's count) and export/import.
+    private static void Counting(string root, List<string> log)
+    {
+        Console.WriteLine("counting, export, import");
+        LevelInfo level = Level(root, "Level 5-3");
+        var store = new SessionStore(root, log.Add);
+        for (int i = 0; i < 3; i++)
+        {
+            store.BeginAttempt(level);
+            store.SubmitAttempt(level, Sample(0, 30, 300 + i), finishesRun: i == 2);
+        }
+        store.Flush();
+        Check(store.AttemptCount(level.Folder) == 3 && File.ReadAllText(Path.Combine(level.Folder, SessionStore.CountFile)) == "3", "the count is kept in the level's folder");
+        Check(new SessionStore(root, log.Add).BeginAttempt(level) == 4, "a relaunch after a win counts on at attempt 4");
+
+        // A level from 1.0: runs but no count file: it starts from every recorded attempt.
+        File.Delete(Path.Combine(level.Folder, SessionStore.CountFile));
+        Check(new SessionStore(root, log.Add).AttemptCount(level.Folder) == 3, "a level from 1.0 counts its recorded attempts");
+
+        // Reset mid-run: back to 1, and that run is closed (not continued, not a win).
+        var playing = new SessionStore(root, log.Add);
+        System.Threading.Thread.Sleep(1100);
+        playing.BeginAttempt(level);
+        playing.SubmitAttempt(level, Sample(0, 30, 310), finishesRun: false);
+        playing.Flush();
+        string unfinished = playing.CurrentRunPath(level.Key, out _);
+        System.Threading.Thread.Sleep(1100);
+        playing.ResetCount(level.Folder);
+        Check(playing.BeginAttempt(level) == 1 && playing.CurrentRunPath(level.Key, out _) != unfinished, "reset: back to attempt 1, in a new run");
+        playing.Flush();
+        SessionInfo closed = SessionFile.Scan(unfinished);
+        Check(closed.Closed && !closed.Complete && closed.Attempts == 1, "the run that was going is closed, not won, its attempt kept");
+        Check(new SessionStore(root, log.Add).BeginAttempt(level) == 1, "after a relaunch the closed run isn't continued, and the count is still reset");
+        playing.SubmitAttempt(level, Sample(0, 30, 311), finishesRun: false);
+        playing.Flush();
+        Check(playing.AttemptCount(level.Folder) == 1, "the next attempt is attempt 1");
+
+        // Export, lose everything, import it back.
+        string zip = playing.Export(level.Folder);
+        Check(File.Exists(zip) && Path.GetDirectoryName(zip) == Path.Combine(root, SessionStore.ExportsFolder), "a level exports to a zip in Exports");
+        string[] before = SessionStore.RunFiles(level.Folder).Select(f => Path.GetFileName(f) + ":" + new FileInfo(f).Length).ToArray();
+        string import = Path.Combine(root, SessionStore.ImportFolder);
+        Directory.CreateDirectory(import);
+        File.Copy(zip, Path.Combine(import, "backup.zip"));
+        foreach (string f in SessionStore.RunFiles(level.Folder))
+        {
+            File.Delete(f);
+        }
+        var fresh = new SessionStore(root, log.Add);
+        ImportResult back = fresh.Import();
+        string[] after = SessionStore.RunFiles(level.Folder).Select(f => Path.GetFileName(f) + ":" + new FileInfo(f).Length).ToArray();
+        Check(back.Zips == 1 && back.Runs == before.Length && before.SequenceEqual(after), $"importing it brings back all {before.Length} runs exactly");
+        Check(File.Exists(Path.Combine(import, "Done", "backup.zip")) && !File.Exists(Path.Combine(import, "backup.zip")), "an imported zip moves to Import\\Done");
+        File.Copy(zip, Path.Combine(import, "again.zip"));
+        ImportResult twice = fresh.Import();
+        Check(twice.Runs == 0 && twice.Skipped == before.Length, "importing the same runs again adds nothing");
+
+        // A zip that tries to write outside the recordings folder, or somewhere odd in it.
+        using (var archive = new ZipArchive(new FileStream(Path.Combine(import, "evil.zip"), FileMode.CreateNew), ZipArchiveMode.Create))
+        {
+            foreach (string name in new[] { "../../outside.ukattempts", "loose.ukattempts", "Import/x/run.ukattempts", "a/b/c/deep.ukattempts" })
+            {
+                using (var w = new StreamWriter(archive.CreateEntry(name).Open()))
+                {
+                    w.Write("nope");
+                }
+            }
+        }
+        ImportResult evil = fresh.Import();
+        Check(evil.Runs == 0 && evil.Skipped == 4 && !File.Exists(Path.Combine(root, "..", "..", "outside.ukattempts")) && !File.Exists(Path.Combine(root, "loose.ukattempts")), "entries outside <level>/<difficulty>/ are refused");
+
+        List<LevelSummary> levels = fresh.Levels();
+        LevelSummary summary = levels.FirstOrDefault(l => l.Folder == level.Folder);
+        Check(summary != null && summary.Attempts == 1 && summary.Runs == before.Length && summary.Wins == 1, $"the level list: attempt {summary?.Attempts}, {summary?.Runs} runs, {summary?.Wins} win");
+        Check(levels.All(l => l.Level != SessionStore.ExportsFolder && l.Level != SessionStore.ImportFolder), "Exports and Import aren't levels");
+    }
+
     // dotnet run -c Release -- <folder>: reads every run in a recordings folder (a copy of yours) with
     // this version: every attempt must decode. Also how shaky the recorded eyes are: the eyes' offset from
     // the body should only change smoothly (sliding down, standing up), so big sample-to-sample changes
@@ -688,7 +765,9 @@ internal static class Program
         Check(data.Attempts[4].End == AttemptEnd.Finish && data.Attempts[4].Number == 5, "attempt 5 is the finish");
         Check(data.Info.Header.Scene == "Level 1-1" && data.Info.Header.Difficulty == 3, "the header remembers the level");
 
-        Check(afterCrash.BeginAttempt(level) == 1, "after a win the next attempt starts a new run at 1");
+        int afterWin = afterCrash.BeginAttempt(level);
+        string newRun = afterCrash.CurrentRunPath(level.Key, out int inNewRun);
+        Check(afterWin == 6 && newRun != first && inNewRun == 0, $"after a win attempts count on (attempt {afterWin}) in a new run");
         string second = null;
         for (int run = 0; run < 3; run++)
         {
@@ -706,8 +785,11 @@ internal static class Program
         fresh.BeginAttempt(other);
         fresh.SubmitAttempt(other, Sample(0, 30, 7), finishesRun: false);
         fresh.Flush();
+        string firstVisit = fresh.CurrentRunPath(other.Key, out _);
         fresh.ForgetRun(other.Key);
-        Check(fresh.BeginAttempt(other) == 1, "with runs not carrying over, a new visit starts at attempt 1");
+        System.Threading.Thread.Sleep(1100);
+        Check(fresh.BeginAttempt(other) == 2 && fresh.CurrentRunPath(other.Key, out _) != firstVisit, "with runs not carrying over, a new visit starts a new run (the count goes on: 2)");
+        Counting(root, log);
         Check(SessionStore.Sanitize("Level: 1/1?") == "Level_ 1_1_", "level names become safe folder names");
         foreach (string line in log)
         {

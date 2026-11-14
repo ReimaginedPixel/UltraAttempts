@@ -23,6 +23,7 @@ namespace UltraAttempts.Recording
         public SessionHeader Header;
         public int Attempts;
         public bool Complete;
+        public bool Closed;         // ended without a win (the attempt count was reset)
         public float FinishLevelTime;
         // Where the readable part of the file ends (a crash can leave half a block after it).
         public long ValidLength;
@@ -41,6 +42,7 @@ namespace UltraAttempts.Recording
     //     1 Attempt   payload = AttemptCodec (each attempt has its own format version, so a run begun
     //                 with an older UltraAttempts carries on with newer attempts in the same file)
     //     2 Complete  payload = i32 winning attempt, f32 level time, i64 utc ticks
+    //     3 Closed    payload = i64 utc ticks: the run ended without a win (its attempt count was reset)
     public static class SessionFile
     {
         public const string Extension = ".ukattempts";
@@ -49,6 +51,7 @@ namespace UltraAttempts.Recording
 
         public const byte BlockAttempt = 1;
         public const byte BlockComplete = 2;
+        public const byte BlockClosed = 3;
 
         public static void WriteHeader(Stream stream, SessionHeader header)
         {
@@ -75,6 +78,8 @@ namespace UltraAttempts.Recording
                 w.Write(payload);
             }
         }
+
+        public static byte[] ClosedPayload(long utcTicks) => BitConverter.GetBytes(utcTicks);
 
         public static byte[] CompletePayload(int attempt, float levelTime, long utcTicks)
         {
@@ -138,6 +143,10 @@ namespace UltraAttempts.Recording
                         {
                             info.Attempts++;
                         }
+                        else if (type == BlockClosed)
+                        {
+                            info.Closed = true;
+                        }
                     }
                     info.ValidLength = stream.Position;
                 }
@@ -194,6 +203,10 @@ namespace UltraAttempts.Recording
                         r.ReadInt32();
                         data.Info.FinishLevelTime = r.ReadSingle();
                         data.Info.Complete = true;
+                    }
+                    else if (type == BlockClosed)
+                    {
+                        data.Info.Closed = true;
                     }
                     ms.Position = start + length;
                     data.Info.ValidLength = ms.Position;
