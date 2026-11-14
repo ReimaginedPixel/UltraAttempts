@@ -45,6 +45,7 @@ As with any of ULTRAKILL's cheats, turning cheats on mid-level means that level 
 | **R** | From the start |
 | **M** | Death markers on/off |
 | **O** | Other attempts' worlds on/off |
+| **G** | The game's HUD through an attempt's eyes on/off |
 | **H** | Hide the HUD |
 | **Esc** / **Backspace** | Leave |
 
@@ -55,6 +56,14 @@ The HUD shows how many attempts are alive, dead and finished, and a timeline wit
 - its HP, its weapon and how many enemies it has killed so far
 
 Through an attempt's eyes the camera is smooth. It follows a curve through the recording, averaged over a short window, so slides, dashes and flicks don't jitter. Cuts and seeks stay sharp.
+
+### Through an attempt's eyes
+
+You see the screen as it was when you played that attempt:
+- **Its weapon** is ULTRAKILL's own viewmodel, animated. It draws each weapon as the attempt switched to it and fires on its shots: the revolver's charged and twirl shots, the shotgun's pump and core, the jackhammer's swing, the nailgun spinning up, the railcannon once it's charged, rockets, cannonballs and napalm. Your arm punches when it punched (and flips the Marksman's coins), and the gun sways as it walked.
+- **The HUD** is the game's own, with that attempt's health and weapon. Whatever else on it would show your game right now (style, stamina, charges) is left out. If your HUD is off in ULTRAKILL's settings, a lookalike stands in. **G** turns it on and off, and the replay's timeline moves to the top meanwhile.
+
+These are copies of your own weapons and HUD, so only weapons in your loadout animate (others are a still model), and the arm is the one you have now. Your own gun and HUD hide meanwhile and come back as they were. `BepInEx\LogOutput.log` has a line starting `first person:` saying what was ready.
 
 ### What the ghosts show
 
@@ -166,6 +175,8 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Recording / Folder | (empty) | Where recordings go (empty: `BepInEx\UltraAttempts`). |
 | Replay / Camera | NextToDie | NextToDie, BestRun, Overview or FreeCam. |
 | Replay / FirstPerson | true | Through the eyes (or from behind). |
+| Replay / FirstPersonWeapons | true | Through the eyes: the weapon as the game's animated viewmodel (weapons in your loadout; others are a still model). |
+| Replay / FirstPersonHud | true | Through the eyes: the game's HUD with the attempt's health and weapon (G switches it). |
 | Replay / Attempts | Auto | Auto, ThisRun, LastFinishedRun or Everything. |
 | Replay / AtLevelEnd | Auto | Auto: play before the next level. Prompt: only with F8 on the results screen. Off. |
 | Replay / MinAttemptsAtLevelEnd | 2 | Only play at the level's end if it took at least this many. |
@@ -241,6 +252,7 @@ The code:
   - `GhostRenderer.cs`, `GhostModels.cs` and `WeaponModels.cs` draw the V1 ghosts, their weapons, bursts, markers, tracers and trails onto ULTRAKILL's camera, so they get its pixelation and palette.
   - `WorldPlayback.cs` plays the followed attempt's enemies and doors. `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
+  - `FirstPersonView.cs` is what you see through an attempt's eyes: `Viewmodel.cs` animates copies of your weapons and arm from what it recorded, and `FirstPersonHud.cs` shows its health and weapon on a copy of the game's HUD.
   - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
 - `src/AttemptsMenu.cs` is the ULTRAATTEMPTS menu on the pause screen.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:

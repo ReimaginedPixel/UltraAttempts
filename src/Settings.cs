@@ -77,6 +77,9 @@ namespace UltraAttempts
 
         public static ConfigEntry<ReplayCamera> Camera;
         public static ConfigEntry<bool> FirstPerson;
+        // Through an attempt's eyes (Viewmodel, FirstPersonHud).
+        public static ConfigEntry<bool> FirstPersonWeapons;
+        public static ConfigEntry<bool> FirstPersonHud;
         public static ConfigEntry<ReplaySource> Source;
         public static ConfigEntry<LevelEndReplay> AtLevelEnd;
         public static ConfigEntry<int> MinAttemptsAtLevelEnd;
@@ -125,6 +128,10 @@ namespace UltraAttempts
                 "The camera a replay starts with (Tab cycles them during the replay; also in the cheat menu).");
             FirstPerson = config.Bind("Replay", "FirstPerson", true,
                 "Following an attempt: through its eyes (on) or from behind it (off). V switches during the replay.");
+            FirstPersonWeapons = config.Bind("Replay", "FirstPersonWeapons", true,
+                "Through an attempt's eyes: its weapon as the game's own viewmodel, animated as it was played (drawn when it switched, firing, alt fire, punching with your arm, the walking sway). Only weapons in your loadout; others, and this off, show a still model. Needs ShowWeapons.");
+            FirstPersonHud = config.Bind("Replay", "FirstPersonHud", true,
+                "Through an attempt's eyes: the game's own HUD, showing that attempt's health and weapon (a lookalike if your HUD is off). G switches it during a replay.");
             Source = config.Bind("Replay", "Attempts", ReplaySource.Auto,
                 "Which attempts a replay shows (also in the cheat menu).");
             AtLevelEnd = config.Bind("Replay", "AtLevelEnd", LevelEndReplay.Auto,

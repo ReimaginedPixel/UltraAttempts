@@ -75,6 +75,13 @@ namespace UltraAttempts.Replay
         public int OverlaysShown { get; private set; }     // other attempts' worlds drawn this frame
         public bool Following => Follow != null && (mode == ReplayCamera.NextToDie || mode == ReplayCamera.BestRun || manual != null);
 
+        // Through an attempt's eyes: its animated weapon and the game's HUD (FirstPersonView).
+        private FirstPersonView firstPersonView;
+        public bool GameHudShown => firstPersonView != null && firstPersonView.HudShown;
+
+        // Inside the followed attempt's head (once the cut's done, or nearly): only its weapon shows, as a viewmodel.
+        private bool InItsEyes => Following && firstPerson && (!Blending || (camPos - followPose.Eye).sqrMagnitude < 1.5f * 1.5f);
+
         private readonly ReplayHud hud = new ReplayHud();
 
         private Origin origin;
@@ -351,6 +358,7 @@ namespace UltraAttempts.Replay
             overlaysPickedAt = -10f;
             overlaysBroken = false;
             sounds = new ReplaySounds(root);
+            firstPersonView = new FirstPersonView(cc, hudCam, hiddenCanvas);
             var prefs = Game.Get<PrefsManager>();
             screenShake = prefs != null ? Mathf.Clamp(prefs.GetFloat("screenShake", 1f), 0f, 2f) : 1f;
             LevelName = level.Name;
@@ -451,6 +459,9 @@ namespace UltraAttempts.Replay
             cache?.Dispose();
             cache = null;
             overlaid.Clear();
+            // (before the HUD camera goes back: it puts back your gun and HUD as it found them)
+            firstPersonView?.Dispose();
+            firstPersonView = null;
             try
             {
                 RoomReveal.Hide(revealed);
@@ -829,6 +840,7 @@ namespace UltraAttempts.Replay
                 things.Dispose();
                 things = null;
             }
+            firstPersonView?.Prepare(Ghosts);
             State = Phase.Playing;
             BeginBlend();
             int withWorlds = Ghosts.Count(g => g.HasWorldData), everything = Ghosts.Count(g => g.HasEverything);
@@ -907,6 +919,7 @@ namespace UltraAttempts.Replay
             }
             PoseAll();
             UpdateCamera(dt);
+            firstPersonView?.Frame(Following ? Follow : null, t, Following && firstPerson, InItsEyes);
             Draw();
         }
 
@@ -958,6 +971,7 @@ namespace UltraAttempts.Replay
             {
                 if (!Game.Paused)
                 {
+                    firstPersonView?.OnGUI();  // (the first person HUD's lookalike, under the replay's overlay)
                     hud.Draw(this, State == Phase.Loading);  // (not over the pause or cheat menu)
                 }
             }
@@ -1102,6 +1116,13 @@ namespace UltraAttempts.Replay
                 Settings.OverlayWorlds.Value = !Settings.OverlayWorlds.Value;
                 overlaysPickedAt = -10f;
                 Notice = Settings.OverlayWorlds.Value ? "OTHER ATTEMPTS' WORLDS: ON" : "OTHER ATTEMPTS' WORLDS: OFF";
+                NoticeAt = Time.unscaledTime;
+            }
+            if (kb.gKey.wasPressedThisFrame)
+            {
+                // (through an attempt's eyes: the game's HUD with its health and weapon)
+                Settings.FirstPersonHud.Value = !Settings.FirstPersonHud.Value;
+                Notice = Settings.FirstPersonHud.Value ? "GAME HUD (THROUGH ITS EYES): ON" : "GAME HUD (THROUGH ITS EYES): OFF";
                 NoticeAt = Time.unscaledTime;
             }
             if (kb.leftArrowKey.wasPressedThisFrame)
@@ -1594,7 +1615,7 @@ namespace UltraAttempts.Replay
             float opacity = Settings.GhostOpacity.Value;
             bool weapons = Settings.ShowWeapons.Value;
             // (inside its head once the cut's done, or nearly: the solid V1 isn't drawn round the camera)
-            bool pov = Following && firstPerson && (!Blending || (camPos - followPose.Eye).sqrMagnitude < 1.5f * 1.5f);
+            bool pov = InItsEyes;
             bool close = Following && !firstPerson && chaseReach < ChaseClose;
             int alive = 0;
             renderer.BeginFrame(t);
@@ -1621,7 +1642,9 @@ namespace UltraAttempts.Replay
                     featured = false;
                     alpha = opacity * 0.7f;
                 }
-                renderer.DrawGhost(g, p, alpha, featured, followed && pov, weapons);
+                // (the animated viewmodel, when it has that weapon, instead of the still one)
+                bool animated = followed && pov && firstPersonView != null && firstPersonView.Covers(g, p.Sample);
+                renderer.DrawGhost(g, p, alpha, featured, followed && pov, weapons && !animated);
             }
             renderer.EndFrame();
             Alive = alive;

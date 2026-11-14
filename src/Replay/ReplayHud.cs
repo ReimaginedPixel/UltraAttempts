@@ -143,15 +143,18 @@ namespace UltraAttempts.Replay
                     Text(new Rect(20f, Ref - 34f, 400f, 24f), "H: SHOW HUD", 14, new Color(1f, 1f, 1f, 0.35f));
                     return;
                 }
+                // (the game's own HUD is at the bottom through an attempt's eyes: the timeline and keys go up top,
+                // between the two panels)
+                bool top = d.GameHudShown;
                 Labels(d, w);
                 Stats(d);
                 Followed(d, w);
-                Timeline(d, w);
-                Help(d);
+                Timeline(d, w, top);
+                Help(d, top);
                 float noticed = Time.unscaledTime - d.NoticeAt;
                 if (noticed >= 0f && noticed < 1.6f)
                 {
-                    Text(new Rect(0f, Ref * 0.12f, w, 30f), d.Notice, 22, new Color(1f, 1f, 1f, Mathf.Clamp01((1.6f - noticed) / 0.4f)), TextAnchor.MiddleCenter);
+                    Text(new Rect(0f, Ref * (top ? 0.22f : 0.12f), w, 30f), d.Notice, 22, new Color(1f, 1f, 1f, Mathf.Clamp01((1.6f - noticed) / 0.4f)), TextAnchor.MiddleCenter);
                 }
                 if (d.Summary)
                 {
@@ -312,9 +315,15 @@ namespace UltraAttempts.Replay
             return icons.TryGetValue(weaponName, out Sprite sprite) ? sprite : null;
         }
 
-        private void Timeline(ReplayDirector d, float w)
+        private void Timeline(ReplayDirector d, float w, bool top)
         {
             float x = 28f, width = w - 56f, y = Ref - 52f;
+            if (top)
+            {
+                x = 460f;
+                width = Mathf.Max(300f, w - 920f);
+                y = 64f;
+            }
             Box(new Rect(x - 8f, y - 44f, width + 16f, 82f), Panel);
             float[] bins = d.Histogram;
             if (bins.Length > 0)
@@ -344,21 +353,21 @@ namespace UltraAttempts.Replay
         private static readonly string[] HelpLines = new string[4];
         private static Key helpExitKey = (Key)(-1);
 
-        private static void Help(ReplayDirector d)
+        private static void Help(ReplayDirector d, bool top)
         {
             // (made again only when the exit key changes, not every frame)
             if (helpExitKey != Settings.ExitKey.Value)
             {
                 helpExitKey = Settings.ExitKey.Value;
-                HelpLines[0] = "TAB / 1-4  CAMERA        V  EYES / BEHIND";
+                HelpLines[0] = "TAB / 1-4  CAMERA        V  EYES / BEHIND        G  GAME HUD";
                 HelpLines[2] = "<- ->  SEEK   UP/DOWN  SPEED   SPACE  PAUSE   R  RESTART";
                 HelpLines[3] = "M  MARKERS   O  OTHER ATTEMPTS' WORLDS   H  HIDE HUD   ESC / " + helpExitKey.ToString().ToUpperInvariant() + "  LEAVE";
             }
             HelpLines[1] = d.Mode == ReplayCamera.FreeCam ? "WASD Q/E  FLY  (SHIFT FAST)" : "Q / E  PICK AN ATTEMPT      MOUSE  LOOK AROUND";
-            float y = Ref - 210f;
+            float x = top ? 460f : 28f, y = top ? 110f : Ref - 210f;
             foreach (string line in HelpLines)
             {
-                Text(new Rect(28f, y, 900f, 20f), line, 13, new Color(1f, 1f, 1f, 0.5f));
+                Text(new Rect(x, y, 900f, 20f), line, 13, new Color(1f, 1f, 1f, 0.5f));
                 y += 19f;
             }
         }
