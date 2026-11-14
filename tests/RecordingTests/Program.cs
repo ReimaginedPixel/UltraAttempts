@@ -179,7 +179,8 @@ internal static class Program
             Console.WriteLine($"  {Path.GetRelativePath(folder, file)}: {run.Attempts.Count} attempts{(run.Info.Complete ? ", won" : "")}, {seconds:0.0} s, {versionInfo}, " +
                 $"{new FileInfo(file).Length / Math.Max(seconds, 0.1):0} bytes/s, eye jitter {(samples > 0 ? jitter / samples : 0):0.0} cm/sample, {(samples > 0 ? 100.0 * shaky / samples : 0):0.0}% shaken (>10 cm)" +
                 $"{(run.Attempts.Any(a => a.Enemies.Count > 0) ? $", {run.Attempts.Sum(a => a.Enemies.Count)} enemy tracks" : "")}" +
-                $"{(run.Attempts.Any(a => a.HasThings) ? $", {run.Attempts.Sum(a => a.Things.Count)} things, {run.Attempts.Sum(a => a.WorldEvents.Count)} explosions/beams/breaks" : "")}");
+                $"{(run.Attempts.Any(a => a.HasThings) ? $", {run.Attempts.Sum(a => a.Things.Count)} things, {run.Attempts.Sum(a => a.WorldEvents.Count)} explosions/beams/breaks" : "")}" +
+                $"{(run.Attempts.Any(a => a.SoundsRecorded) ? $", {run.Attempts.Sum(a => a.Sounds.Count)} sounds ({run.Attempts.SelectMany(a => a.SoundClips).Select(c => c.Name).Distinct().Count()} clips)" : "")}");
             foreach (string error in errors)
             {
                 Console.WriteLine("        " + error);
@@ -246,8 +247,114 @@ internal static class Program
         {
             ExtremeWorld(a, random);
             ExtremeThings(a, random);
+            ExtremeSounds(a, random);
         }
         return a;
+    }
+
+    private static readonly string[] ClipNames = { "Revolver Shot 1", "Ünïcödé Explosion", "", "gabriel_taunt_04", new string('S', 300) };
+
+    // Sounds with anything in them (Recording.RecordSounds): out of order (delayed ones), any number in any field,
+    // positions far off, moves of any of them.
+    private static void ExtremeSounds(RawAttempt a, Random random)
+    {
+        a.SoundsRecorded = random.Next(4) != 0;
+        if (!a.SoundsRecorded && random.Next(2) == 0)
+        {
+            return;
+        }
+        for (int c = random.Next(0, 5); c > 0; c--)
+        {
+            a.SoundClips.Add(new SoundClip { Name = ClipNames[random.Next(ClipNames.Length)], LengthMs = random.Next(0, int.MaxValue) });
+        }
+        if (a.SoundClips.Count == 0)
+        {
+            return;
+        }
+        int sample = 0;
+        for (int s = random.Next(0, 30); s > 0; s--)
+        {
+            sample += random.Next(0, 4) == 0 ? -random.Next(0, 50) : random.Next(0, 40);
+            a.Sounds.Add(new SoundEvent
+            {
+                Sample = random.Next(10) == 0 ? random.Next(int.MinValue, int.MaxValue) : sample,
+                Clip = random.Next(a.SoundClips.Count),
+                Flags = (SoundFlags)random.Next(0, 256),
+                Volume = random.Next(3) == 0 ? random.Next(int.MinValue, int.MaxValue) : random.Next(0, 2000),
+                Pitch = random.Next(3) == 0 ? random.Next(int.MinValue, int.MaxValue) : random.Next(-1000, 3000),
+                Spatial = (byte)random.Next(256),
+                Rolloff = (byte)random.Next(256),
+                MinDistance = random.Next(int.MinValue, int.MaxValue),
+                MaxDistance = random.Next(0, 100_000_000),
+                X = random.Next(-100_000_000, 100_000_001),
+                Y = random.Next(-100_000_000, 100_000_001),
+                Z = random.Next(int.MinValue, int.MaxValue),
+                Length = random.Next(-5, 1000),
+            });
+        }
+        if (a.Sounds.Count > 2)
+        {
+            // (the far ends of every number, next to each other: the steps between them wrap round and back)
+            a.Sounds[0] = new SoundEvent { Sample = int.MinValue, Clip = 0, X = int.MaxValue, Y = int.MinValue, Z = int.MaxValue, Volume = int.MaxValue, Pitch = int.MinValue, Length = int.MaxValue };
+            a.Sounds[1] = new SoundEvent { Sample = int.MaxValue, Clip = a.SoundClips.Count - 1, X = int.MinValue, Y = int.MaxValue, Z = int.MinValue, MinDistance = int.MinValue, MaxDistance = int.MaxValue, Flags = (SoundFlags)255, Spatial = 255, Rolloff = 255 };
+        }
+        for (int m = random.Next(0, 20); m > 0 && a.Sounds.Count > 0; m--)
+        {
+            a.SoundMoves.Add(new SoundMove
+            {
+                Sound = random.Next(a.Sounds.Count),
+                Sample = random.Next(int.MinValue, int.MaxValue),
+                X = random.Next(int.MinValue, int.MaxValue),
+                Y = random.Next(-100_000_000, 100_000_001),
+                Z = random.Next(-100_000_000, 100_000_001),
+            });
+        }
+    }
+
+    // A minute of a fight's sounds, as the recorder makes them: V1's guns, punches and feet (on V1, heard
+    // everywhere), enemies about and now and then an explosion (where they were, some of them moving), a slide's loop.
+    private static void Noises(RawAttempt a, int seed)
+    {
+        var random = new Random(seed);
+        a.SoundsRecorded = true;
+        string[] names = { "Revolver Shot 1", "Revolver Shot 2", "Shotgun Shot", "Footstep 1", "Footstep 2", "Footstep 3", "Punch",
+            "Filth Attack", "Stray Throw", "Explosion", "Gabriel Taunt 3", "Gabriel Swing", "Slide Loop", "Door Open", "Hurt" };
+        foreach (string name in names)
+        {
+            a.SoundClips.Add(new SoundClip { Name = name, LengthMs = 200 + random.Next(2500) });
+        }
+        for (int sample = 0; sample < a.Count; sample += 1 + random.Next(10))
+        {
+            int clip = random.Next(names.Length);
+            bool own = clip < 7 || clip == 12 || clip == 14;
+            var e = new SoundEvent
+            {
+                Sample = sample,
+                Clip = clip,
+                Flags = (own ? SoundFlags.OnPlayer : 0) | (clip == 12 ? SoundFlags.Loop : 0) | (clip == 6 ? SoundFlags.OneShot : 0),
+                Volume = own ? 550 : 1000,
+                Pitch = clip < 2 ? 900 + random.Next(200) : 1000,
+                Spatial = (byte)(own ? 0 : 255),
+                Rolloff = 1,
+                MinDistance = 500,
+                MaxDistance = clip == 9 ? 20000 : 10000,
+                Length = clip == 12 ? 30 + random.Next(60) : random.Next(10) == 0 ? 5 + random.Next(20) : 0,
+            };
+            if (!own)
+            {
+                e.X = a.PosX[sample] + random.Next(-3000, 3000);
+                e.Y = a.PosY[sample] + random.Next(-300, 300);
+                e.Z = a.PosZ[sample] + random.Next(-3000, 3000);
+            }
+            a.Sounds.Add(e);
+            if (!own && random.Next(8) == 0)
+            {
+                for (int k = 1; k <= 3; k++)
+                {
+                    a.SoundMoves.Add(new SoundMove { Sound = a.Sounds.Count - 1, Sample = sample + k * 2, X = e.X + k * 150, Y = e.Y, Z = e.Z - k * 90 });
+                }
+            }
+        }
     }
 
     private static readonly string[] MeshNames = { "Sphere", "Cube", "Rocket", "Ünïcödé Nail", "", "Gib_Head", new string('M', 400) };
@@ -467,6 +574,35 @@ internal static class Program
                 return false;
             }
         }
+        if (a.SoundsRecorded != b.SoundsRecorded || a.SoundClips.Count != b.SoundClips.Count || a.Sounds.Count != b.Sounds.Count || a.SoundMoves.Count != b.SoundMoves.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.SoundClips.Count; i++)
+        {
+            if (a.SoundClips[i].Name != b.SoundClips[i].Name || a.SoundClips[i].LengthMs != b.SoundClips[i].LengthMs)
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < a.Sounds.Count; i++)
+        {
+            SoundEvent e = a.Sounds[i], f = b.Sounds[i];
+            if (e.Sample != f.Sample || e.Clip != f.Clip || e.Flags != f.Flags || e.Volume != f.Volume || e.Pitch != f.Pitch || e.Spatial != f.Spatial
+                || e.Rolloff != f.Rolloff || e.MinDistance != f.MinDistance || e.MaxDistance != f.MaxDistance || e.X != f.X || e.Y != f.Y || e.Z != f.Z
+                || e.Length != f.Length)
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < a.SoundMoves.Count; i++)
+        {
+            SoundMove m = a.SoundMoves[i], n = b.SoundMoves[i];
+            if (m.Sound != n.Sound || m.Sample != n.Sample || m.X != n.X || m.Y != n.Y || m.Z != n.Z)
+            {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -543,7 +679,7 @@ internal static class Program
             RawAttempt a = Sample(42, n, n, world: false);
             Check(Same(a, RoundTrip(a)), $"{n} samples come back exactly");
         }
-        int enemies = 0, doors = 0, enemySamples = 0, things = 0, keys = 0, looks = 0, happenings = 0;
+        int enemies = 0, doors = 0, enemySamples = 0, things = 0, keys = 0, looks = 0, happenings = 0, sounds = 0, clips = 0, moves = 0, recorded = 0;
         bool exact = true;
         for (int seed = 0; seed < 200; seed++)
         {
@@ -556,18 +692,28 @@ internal static class Program
             keys += a.Things.Sum(t => t.Count);
             looks += a.Looks.Count;
             happenings += a.WorldEvents.Count;
+            sounds += a.Sounds.Count;
+            clips += a.SoundClips.Count;
+            moves += a.SoundMoves.Count;
+            recorded += a.SoundsRecorded ? 1 : 0;
         }
         Check(exact, $"200 attempts with their worlds come back exactly ({enemies} enemies, {enemySamples} enemy samples, {doors} doors, "
             + $"{things} things, {keys} thing keys, {looks} looks, {happenings} explosions, beams and breaks; NaNs and extremes included)");
+        Check(exact && sounds > 500 && moves > 100 && recorded > 100 && recorded < 200,
+            $"...and their sounds ({recorded} recorded with sounds, {sounds} sounds of {clips} clips, {moves} moves; out of order, wrapping round, any number in any field)");
 
         RawAttempt crowd = Smooth(60 * 60, 5, 60);
         Crowd(crowd, 12, 5);
         Battle(crowd, 5);
-        Check(Same(crowd, RoundTrip(crowd)), "a minute with 12 enemies about and a battle's worth of things comes back exactly");
+        Noises(crowd, 5);
+        Check(Same(crowd, RoundTrip(crowd)), $"a minute with 12 enemies about, a battle's worth of things and {crowd.Sounds.Count} sounds comes back exactly");
         RawAttempt bare = RoundTrip(crowd, world: false);
         Check(bare.Count == crowd.Count && bare.Enemies.Count == 0 && bare.DoorPaths.Count == 0 && bare.Things.Count == 0 && bare.Looks.Count == 0
             && bare.WorldEvents.Count == 0 && bare.PosX[100] == crowd.PosX[100],
             "decoding without the world leaves out the enemies, doors and things (and nothing else)");
+        Check(bare.SoundsRecorded && bare.Sounds.Count == crowd.Sounds.Count && bare.SoundMoves.Count == crowd.SoundMoves.Count && bare.SoundClips.Count == crowd.SoundClips.Count
+            && bare.Sounds[50].X == crowd.Sounds[50].X && bare.Sounds[^1].Length == crowd.Sounds[^1].Length,
+            "...but keeps the sounds (a replay keeps every attempt's, not only their worlds')");
 
         RawAttempt live = Sample(3, 50, 9);
         live.Enemies.Add(new EnemyTrack { Id = 99, Name = "Filth" });
@@ -575,13 +721,23 @@ internal static class Program
         live.Things.Add(new ThingTrack { Id = 5 });
         live.Things[^1].Add(4, 1, 2, 3, 0, 0, 0, 32767, 1000);
         live.SourcePath = "somewhere";
+        live.SoundsRecorded = true;
+        live.SoundClips.Add(new SoundClip { Name = "Revolver Shot 1", LengthMs = 812 });
+        live.Sounds.Add(new SoundEvent { Sample = 3, Clip = live.SoundClips.Count - 1, Volume = 550 });
+        live.SoundMoves.Add(new SoundMove { Sound = live.Sounds.Count - 1, Sample = 5, X = 1 });
         RawAttempt clone = live.Clone(AttemptEnd.InProgress);
         clone.Enemies[^1].PosX[0] = 77;
         clone.Things[^1].PosX[0] = 77;
         clone.Things.Add(new ThingTrack());
+        int liveSounds = live.Sounds.Count, liveMoves = live.SoundMoves.Count, liveClips = live.SoundClips.Count;
+        live.Sounds.Add(new SoundEvent());     // (the recorder carries on after the snapshot)
+        live.SoundMoves.Add(new SoundMove());
+        live.SoundClips.Add(new SoundClip());
         Check(clone.End == AttemptEnd.InProgress && clone.PosX.Length == 50 && clone.PosX[10] == live.PosX[10], "an attempt in progress clones trimmed");
         Check(clone.Enemies.Count == live.Enemies.Count && live.Enemies[^1].PosX[0] == 1, "...with its own copy of the enemies");
         Check(clone.Things.Count == live.Things.Count + 1 && live.Things[^1].PosX[0] == 1 && clone.SourcePath == null, "...and of the things (and no file of its own)");
+        Check(clone.SoundsRecorded && clone.Sounds.Count == liveSounds && clone.SoundMoves.Count == liveMoves && clone.SoundClips.Count == liveClips
+            && clone.Sounds[^1].Volume == 550, "...and of the sounds");
 
         bool threw = false;
         try
@@ -685,9 +841,78 @@ internal static class Program
         return a;
     }
 
+    // An attempt recorded by 1.2 (everything that moved or happened, no sounds): format 3, written by its own
+    // encoder (commit 860bb34) from OldAttemptV3() below.
+    private const string Version3Attempt =
+        "YxZlZGFQmHFaW/Quhw0Dg5ITA4OWEwujkLN/kKuCq5erc4hCsId/iHuoX4UiAwMDIxgrQGkGBnqIpcBAMgwkwUAiDCTAQDwMxMFALAzEwEA0DETBQCQMRMBA" +
+        "eHj4AnllFhZBFiAAE/Rj3mARAnqbgaG2js7UGiY9MGPEgA+MIMBBf2KgPLxd3GhgLG6ohaRp+gMOBnGJAUAz3jAzD4yHmRmARToDAwi7sTAwMTAxSvmklqXm" +
+        "KBvomyjoKjgWpeYlAtku+flFygaM7O6JSUWZqTmMbBZADQ32HIxGL9gDSLWzg49kZx5nlCNZD+lgAh0ioeELszqpelZ9uPyFH4s4E36xFSK0hv+YOUkFLGxB" +
+        "+cnZqSWcEMo3sYTFPSe/XA5bqgvISSxJyy/KVTZkZPjf2PgHHAZnz5yxBWK7WTNnwrA9I8MaNiZGJK832KGFuj2QcIBhRmYmJnCxChKG4ApGESYWUAuiwQEq" +
+        "5FDGwGQDyhfoYAvjCcY12IKeYQEbNtEX7MlYxSkH//5jS7Ag0QvYkgtQkLmKcYfBAjaR7Qbz2YR/hH5h/n+w8R9ELVCbGtN0wZQ/TC/YGTZYf2C8wfIfCOCS" +
+        "csz9zKuZfnD1y1xnaefbIc4AlgUG4wMhhh//mAE=";
+
+    private static RawAttempt OldAttemptV3()
+    {
+        var a = new RawAttempt
+        {
+            Number = 21,
+            Start = AttemptStart.Checkpoint,
+            End = AttemptEnd.Finish,
+            StartedUtcTicks = 638_690_000_000_000_000L,
+            SampleRate = 60,
+            LevelTimeStart = 40.5f,
+            LevelTimeEnd = 42.5f,
+            Cheats = false,
+            MajorAssists = false,
+            WeaponsRecorded = true,
+            EnemyStride = 2,
+        };
+        for (int i = 0; i < 120; i++)
+        {
+            a.Add(
+                2000 - i * 19 + (i * i) % 11, 300 + (i % 7) * 9, 150 + i * 23,
+                0, (short)(120 - (i % 5)), 0,
+                (short)(i * 25 - 1500), (short)(8000 + i * 9), (short)((i % 3) * 4), (short)(31500 - i * 2),
+                (byte)((i % 4 == 0 ? 1 : 0) | (i % 10 == 0 ? 32 : 0)), (byte)(100 - i / 9));
+        }
+        a.Events.Add(new AttemptEvent { Sample = 0, Kind = EventKind.Weapon, A = 2, B = 0, C = a.AddWeaponName("CORE EJECT SHOTGUN") });
+        int d0 = a.AddDoorPath("Level#0/4 - Arena#0/Door#0");
+        a.Events.Add(new AttemptEvent { Sample = 0, Kind = EventKind.Door, A = d0, B = 0 });
+        a.Events.Add(new AttemptEvent { Sample = 70, Kind = EventKind.Door, A = d0, B = 1 });
+        var e = new EnemyTrack { Id = 3, Type = 28, Name = "Gabriel", Scale = 1f, Start = 4, Died = true };
+        for (int s = 0; s < 50; s++)
+        {
+            e.Add(500 + s * 40, 900, -100 + s * 15, 0, (short)(s * 200), 0, (short)(32000 - s * 20), unchecked((int)0x7F4A7C15) + (s / 20), (ushort)(s * 1300), (byte)(255 - s * 5));
+        }
+        a.Enemies.Add(e);
+        a.Looks.Add(new ThingLook
+        {
+            Name = "Rocket",
+            Color = 0xFF8040FFu,
+            CenterX = 0f, CenterY = 0.1f, CenterZ = 0.4f,
+            SizeX = 0.3f, SizeY = 0.3f, SizeZ = 1.2f,
+            Parts = { new LookPart { Mesh = "Rocket", Vertices = 812, Materials = new[] { "RocketMat", "Glow" }, PZ = 0.25f, SX = 2f, SY = 2f, SZ = 2f } },
+        });
+        int platform = a.AddThingPath("Level#0/4 - Arena#0/Platform#1");
+        var rocket = new ThingTrack { Id = 1, Kind = ThingKind.Projectile, Look = 0, ScaleX = 1f, ScaleY = 1f, ScaleZ = 1f, End = 60, Gone = true };
+        for (int k = 0; k < 20; k++)
+        {
+            rocket.Add(30 + k * 2, 100 + k * 150, 400, -50 + k * 3, 0, 0, 0, 32767, 1000);
+        }
+        a.Things.Add(rocket);
+        var mover = new ThingTrack { Id = 2, Kind = ThingKind.Mover, Path = platform, ScaleX = 4f, ScaleY = 1f, ScaleZ = 4f, End = 119 };
+        mover.Add(0, 0, 0, 0, 0, 0, 0, 32767, 1000);
+        mover.Add(90, 0, 500, 0, 0, 0, 0, 32767, 1000);
+        a.Things.Add(mover);
+        a.WorldEvents.Add(new WorldEvent { Sample = 61, Kind = WorldEventKind.Explosion, X = 3100, Y = 400, Z = 10, Size = 5500, Life = 250, Color = 0xFFC060FFu, Look = -1, Path = -1, RotW = 32767 });
+        a.WorldEvents.Add(new WorldEvent { Sample = 80, Kind = WorldEventKind.Beam, X = 2000, Y = 450, Z = 200, ToX = 2500, ToY = 450, ToZ = 4000, Size = 120, Life = 300, Color = 0xFFFFFFFFu, Look = -1, Path = -1, RotW = 32767 });
+        a.WorldEvents.Add(new WorldEvent { Sample = 95, Kind = WorldEventKind.Break, X = 1800, Y = 300, Z = 900, Size = 1500, Color = 0xFFFFFFFFu, Look = 0, Path = platform, RotY = 1200, RotW = 32700 });
+        return a;
+    }
+
     private static void OldAttempts()
     {
-        Console.WriteLine("1.0 and 1.1 attempts");
+        Console.WriteLine("1.0, 1.1 and 1.2 attempts");
         byte[] bytes = Convert.FromBase64String(Version1Attempt);
         Check(Inflate(bytes)[0] == 1, "the embedded attempt is format 1");
         RawAttempt a = AttemptCodec.Decode(bytes, 0, bytes.Length);
@@ -705,6 +930,15 @@ internal static class Program
         Check(light.Count == 120 && light.Enemies.Count == 0 && light.Events.Count == b.Events.Count, "...and without its world when asked");
         again = AttemptCodec.Encode(b);
         Check(Inflate(again)[0] == AttemptCodec.Version && Same(b, AttemptCodec.Decode(again, 0, again.Length)), $"saved again it's format {AttemptCodec.Version}, and the same");
+
+        bytes = Convert.FromBase64String(Version3Attempt);
+        Check(Inflate(bytes)[0] == 3, "the embedded 1.2 attempt is format 3");
+        RawAttempt c = AttemptCodec.Decode(bytes, 0, bytes.Length);
+        Check(Same(OldAttemptV3(), c) && c.Enemies.Count == 1 && c.Things.Count == 2 && c.Looks.Count == 1 && c.WorldEvents.Count == 3,
+            "an attempt recorded by 1.2 reads back exactly, its things, looks, explosions, beams and breaks included");
+        Check(!c.SoundsRecorded && c.Sounds.Count == 0 && c.SoundClips.Count == 0 && c.SoundMoves.Count == 0, "...with no sounds (and known not to have been recording them)");
+        again = AttemptCodec.Encode(c);
+        Check(Inflate(again)[0] == AttemptCodec.Version && Same(c, AttemptCodec.Decode(again, 0, again.Length)), $"saved again it's format {AttemptCodec.Version}, and the same");
     }
 
     // Damaged attempts are refused (and quickly: a count too big for the data isn't allocated first).
@@ -780,6 +1014,22 @@ internal static class Program
             damaged.AddRange(new byte[64]);
             tooMany.Add(damaged);
         }
+        // Version 4: the sounds come right after the events (no samples, no events): far too many clips, sounds, moves.
+        var head4 = head.Take(head.Count - 2).ToList();
+        head4[0] = 4;
+        foreach (byte[] tail in new[]
+        {
+            new byte[] { 1, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+            new byte[] { 1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+            new byte[] { 1, 1, 1, (byte)'x', 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+            new byte[] { 1, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+        })
+        {
+            var damaged = new List<byte>(head4);
+            damaged.AddRange(tail);
+            damaged.AddRange(new byte[64]);
+            tooMany.Add(damaged);
+        }
         bool both = true;
         var clock = Stopwatch.StartNew();
         foreach (List<byte> damaged in tooMany)
@@ -794,7 +1044,30 @@ internal static class Program
             {
             }
         }
-        Check(both && clock.ElapsedMilliseconds < 1000, $"a count too big for the data is refused before anything that size is made ({tooMany.Count} kinds, version 3's included)");
+        Check(both && clock.ElapsedMilliseconds < 1000, $"a count too big for the data is refused before anything that size is made ({tooMany.Count} kinds, versions 3's and 4's included)");
+
+        // A sound of a clip that isn't there, and a sound's move for a sound that isn't there.
+        RawAttempt badClip = Sample(5, 60, 3, world: false);
+        badClip.SoundClips.Add(new SoundClip { Name = "Shot", LengthMs = 500 });
+        badClip.Sounds.Add(new SoundEvent { Sample = 4, Clip = 1 });
+        RawAttempt badMove = Sample(5, 60, 3, world: false);
+        badMove.SoundClips.Add(new SoundClip { Name = "Shot", LengthMs = 500 });
+        badMove.Sounds.Add(new SoundEvent { Sample = 4, Clip = 0 });
+        badMove.SoundMoves.Add(new SoundMove { Sound = 1, Sample = 6 });
+        int refusedSounds = 0;
+        foreach (RawAttempt wrong in new[] { badClip, badMove })
+        {
+            try
+            {
+                byte[] bytes = AttemptCodec.Encode(wrong);
+                AttemptCodec.Decode(bytes, 0, bytes.Length, world: false);
+            }
+            catch (InvalidDataException)
+            {
+                refusedSounds++;
+            }
+        }
+        Check(refusedSounds == 2, "a sound with a clip that isn't there, or a move of a sound that isn't there, is refused");
 
         // A thing pointing at a look or a path that isn't there.
         RawAttempt bad = Sample(5, 60, 3, world: false);
@@ -1055,6 +1328,14 @@ internal static class Program
         Console.WriteLine($"        ...and a battle (WorldDetail = Everything): {battle / 1024.0:0.0} KB; {fast.Things.Count} things ({keys} keys), {fast.WorldEvents.Count} explosions and beams "
             + $"add {(battle - crowdedBytes) / 1024.0:0.0} KB ({(battle - crowdedBytes) / 60.0:0} bytes/s, {keys * 26 / 1024.0:0.0} KB as plain structs)");
         Check(battle - crowdedBytes < keys * 26 / 4, "the things are at least 4x smaller than plain keys");
+        Check(Same(fast, RoundTrip(fast)), "...and come back exactly");
+
+        Noises(fast, 77);
+        int heard = AttemptCodec.Encode(fast).Length;
+        const int plainSound = 4 + 4 + 1 + 4 + 4 + 1 + 1 + 4 + 4 + 12 + 4;  // every field of a sound as a plain struct
+        Console.WriteLine($"        ...and its sounds (RecordSounds): {fast.Sounds.Count} sounds ({fast.Sounds.Count / 60.0:0} a second) and {fast.SoundMoves.Count} moves "
+            + $"add {(heard - battle) / 1024.0:0.0} KB ({(heard - battle) / (double)fast.Sounds.Count:0.0} bytes a sound, {fast.Sounds.Count * plainSound / 1024.0:0.0} KB as plain structs)");
+        Check(heard - battle < fast.Sounds.Count * plainSound / 5, "the sounds are at least 5x smaller than plain structs");
         Check(Same(fast, RoundTrip(fast)), "...and come back exactly");
 
         RawAttempt exact = Smooth(60 * 60, 123, 60);

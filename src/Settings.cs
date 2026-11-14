@@ -75,6 +75,10 @@ namespace UltraAttempts
         public static ConfigEntry<bool> ShowAttemptCounter;
         public static ConfigEntry<string> Folder;
 
+        // The game's own sounds: recorded with each attempt, played again in a replay.
+        public static ConfigEntry<bool> RecordSounds;
+        public static ConfigEntry<float> OtherAttemptsVolume;
+
         public static ConfigEntry<ReplayCamera> Camera;
         public static ConfigEntry<bool> FirstPerson;
         public static ConfigEntry<ReplaySource> Source;
@@ -120,6 +124,12 @@ namespace UltraAttempts
                 "Show \"ATTEMPT 37\" for a moment at the start of each attempt.");
             Folder = config.Bind("Recording", "Folder", "",
                 "Where recordings go. Empty: BepInEx\\UltraAttempts next to the game.");
+
+            // The game's own sounds.
+            RecordSounds = config.Bind("Recording", "RecordSounds", true,
+                "Also record the game's own sound effects as you hear them (your guns and punches, explosions, enemies and their voice lines, doors), to play them again in a replay. Not the music.");
+            OtherAttemptsVolume = config.Bind("Replay", "OtherAttemptsVolume", 0.3f,
+                new ConfigDescription("In a replay, the attempt you follow plays its sounds in full; this is how loud every other attempt's are (the nearest first; the same sound from many attempts at once plays once, louder). 0: only the followed attempt's. Sounds = false or Volume = 0 silences them all.", new AcceptableValueRange<float>(0f, 1f)));
 
             Camera = config.Bind("Replay", "Camera", ReplayCamera.NextToDie,
                 "The camera a replay starts with (Tab cycles them during the replay; also in the cheat menu).");

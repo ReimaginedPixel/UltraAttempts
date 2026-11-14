@@ -351,6 +351,7 @@ namespace UltraAttempts.Replay
             overlaysPickedAt = -10f;
             overlaysBroken = false;
             sounds = new ReplaySounds(root);
+            gameSounds = new GameSounds(root.transform, cc.cam);
             var prefs = Game.Get<PrefsManager>();
             screenShake = prefs != null ? Mathf.Clamp(prefs.GetFloat("screenShake", 1f), 0f, 2f) : 1f;
             LevelName = level.Name;
@@ -478,6 +479,7 @@ namespace UltraAttempts.Replay
             {
                 Plugin.Log.LogError("putting the game back after a replay: " + e);
             }
+            StopGameSounds();
             renderer?.Dispose();
             sounds?.Dispose();
             renderer = null;
@@ -829,6 +831,7 @@ namespace UltraAttempts.Replay
                 things.Dispose();
                 things = null;
             }
+            PrepareGameSounds();
             State = Phase.Playing;
             BeginBlend();
             int withWorlds = Ghosts.Count(g => g.HasWorldData), everything = Ghosts.Count(g => g.HasEverything);
@@ -907,6 +910,7 @@ namespace UltraAttempts.Replay
             }
             PoseAll();
             UpdateCamera(dt);
+            UpdateGameSounds(before, menu);
             Draw();
         }
 
@@ -1788,6 +1792,55 @@ namespace UltraAttempts.Replay
         }
 
         private float FromCamera(Ghost g) => g.Index >= 0 && g.Index < poses.Length ? (poses[g.Index].Body - camPos).sqrMagnitude : float.MaxValue;
+
+        // ---------------------------------------------------------------- the game's own sounds
+
+        // Each attempt's own gunshots, explosions, enemies and voice lines (recorded with RecordSounds): see GameSounds.
+        private GameSounds gameSounds;
+
+        private void PrepareGameSounds()
+        {
+            try
+            {
+                gameSounds?.Prepare(Ghosts);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("getting the replay's sounds ready (none this time; the ghosts still play): " + e);
+                StopGameSounds();
+            }
+        }
+
+        // (after the camera's moved for this frame: sounds are heard from where it is)
+        private void UpdateGameSounds(float before, bool menu)
+        {
+            if (gameSounds == null)
+            {
+                return;
+            }
+            try
+            {
+                gameSounds.Update(Ghosts, Following ? Follow : Best, before, t, Speed, menu || userPaused, camPos, camRot, Following && firstPerson);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("playing the replay's sounds (off for the rest of this replay; the ghosts still play): " + e);
+                StopGameSounds();
+            }
+        }
+
+        private void StopGameSounds()
+        {
+            try
+            {
+                gameSounds?.Dispose();
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("stopping the replay's sounds: " + e);
+            }
+            gameSounds = null;
+        }
 
         // Whether a ghost's own shots show as they really were (its projectiles and beams, drawn with its
         // world): then it needs no tracers of its own.

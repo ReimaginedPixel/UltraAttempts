@@ -263,6 +263,51 @@ namespace UltraAttempts.Recording
         public short RotX, RotY, RotZ, RotW;
     }
 
+    [Flags]
+    public enum SoundFlags : byte
+    {
+        None = 0,
+        Loop = 1,
+        // Played by V1 itself (its guns, its punches, its feet; anything under the player or its camera): a
+        // replay plays it at the ghost.
+        OnPlayer = 2,
+        // Played with PlayOneShot (else Play: the source's own clip).
+        OneShot = 4,
+    }
+
+    // A sound clip an attempt heard, by name (found again among the game's loaded clips later); its length
+    // tells same-named clips apart.
+    public struct SoundClip
+    {
+        public string Name;
+        public int LengthMs;
+    }
+
+    // One of the game's own sounds starting (Recording.RecordSounds; format 4): which clip, when, where, how loud
+    // and how it fades with distance, and when it stopped if it didn't play out by itself (a loop, a sound cut off).
+    public struct SoundEvent
+    {
+        public int Sample;            // the attempt sample it started at
+        public int Clip;              // index into RawAttempt.SoundClips
+        public SoundFlags Flags;
+        public int Volume;            // its source's volume (times PlayOneShot's scale) * 1000
+        public int Pitch;             // * 1000 (negative: backwards)
+        public byte Spatial;          // spatial blend * 255 (0: heard the same everywhere)
+        public byte Rolloff;          // (int)AudioRolloffMode
+        public int MinDistance;       // centimetres
+        public int MaxDistance;       // centimetres
+        public int X, Y, Z;           // centimetres, where it started (OnPlayer: unused)
+        public int Length;            // samples it played for before it was stopped; 0: it played out by itself
+    }
+
+    // A sound still playing moved (its source went with a projectile, an enemy): where it was at that sample.
+    public struct SoundMove
+    {
+        public int Sound;             // index into RawAttempt.Sounds
+        public int Sample;
+        public int X, Y, Z;           // centimetres
+    }
+
     // One attempt as recorded: fixed-rate samples, already quantized (centimetres, rotation * 32767),
     // kept as one array per channel (which is also how they're stored, for compression). Sample i is
     // at i / SampleRate seconds into the attempt.
@@ -302,6 +347,13 @@ namespace UltraAttempts.Recording
         public List<string> ThingPaths = new List<string>();
         public List<ThingTrack> Things = new List<ThingTrack>();
         public List<WorldEvent> WorldEvents = new List<WorldEvent>();
+
+        // The game's own sounds as this attempt heard them (Recording.RecordSounds; format 4). SoundsRecorded:
+        // they were being recorded (older attempts, or with RecordSounds off, have none).
+        public bool SoundsRecorded;
+        public List<SoundClip> SoundClips = new List<SoundClip>();
+        public List<SoundEvent> Sounds = new List<SoundEvent>();
+        public List<SoundMove> SoundMoves = new List<SoundMove>();
 
         // Where this attempt's bytes are in its run file (set when read from one): its world can be read again
         // from there later instead of being kept in memory. Not saved.
@@ -412,6 +464,9 @@ namespace UltraAttempts.Recording
             copy.ThingPaths = new List<string>(ThingPaths);
             copy.Things = Things.ConvertAll(t => t.Clone());
             copy.WorldEvents = new List<WorldEvent>(WorldEvents);
+            copy.SoundClips = new List<SoundClip>(SoundClips);
+            copy.Sounds = new List<SoundEvent>(Sounds);
+            copy.SoundMoves = new List<SoundMove>(SoundMoves);
             copy.SourcePath = null;
             return copy;
         }

@@ -91,6 +91,16 @@ The other attempts' worlds play at the same time: the 20 nearest living attempts
 - **O** turns them on and off, and the HUD says how many are showing.
 - **OverlayWorlds** and **OverlayOpacity** set this in the config. Recordings with only enemies overlay their enemies.
 
+### What you hear
+
+Each attempt records the game's own sounds as you heard them: your gunshots and punches, footsteps, explosions, the enemies, Gabriel's taunts and every other voice line, doors. Not the music. A replay plays them again with the game's own clips:
+- **The attempt you follow** (or, in the overview and free cam, the winner) plays its sounds in full, from where they were. Through its eyes they sound as they did.
+- **Every other attempt** plays its sounds quieter (**OtherAttemptsVolume**, 0.3; 0 for only the followed one's), the nearest first. The same sound from many attempts at once (28 gunshots as the level starts) plays once, a little louder.
+- Pausing pauses them, speeding up or slowing down pitches them up or down, and a seek or a camera cut stops them (no burst of everything skipped over).
+- Attempts recorded before sounds were play their shots with the game's sound for that gun.
+
+The death pop and the win chime still play on top. A clip the level hasn't loaded is skipped; `BepInEx\LogOutput.log` says how many were found.
+
 ULTRAKILL switches rooms off behind doors that close behind you. While a replay plays, those rooms come back (as if you'd walked back through the door), so earlier attempts aren't running through nothing. They switch off again after.
 
 ## Runs and attempts
@@ -141,6 +151,8 @@ With **WorldDetail** above Off, each attempt also records:
 - each enemy around (where it is, which way it faces, its animation, its health, when it dies)
 - every door's state at the start, then each open and close
 
+With **RecordSounds** (on by default, whatever WorldDetail is), it also records each of the game's sounds as it starts: its clip by name (found again among the game's loaded clips later), when and where (V1's own go with the ghost), how loud, pitched and spread, when it stopped if it was cut off or looped, and where it went if it moved. Not the music, and nothing out of earshot. About 5 KB a minute in a fight.
+
 With Everything, it also records whatever else moves (see above): each thing with what it looks like (its meshes and materials by name, found again among the game's loaded assets later, or a coloured box) and where it was, plus explosions, beams and breakables as events. A busy fight adds about 40 KB a minute. Worlds are read back from the run file only when a replay needs them, so long runs still load quickly.
 
 Recordings are kept small. Each channel (positions, rotations, ...) is stored on its own. Positions and rotations are stored as the difference from where the two samples before predict them to be: moving at a steady speed or turning at a steady rate leaves nothing to store. Everything goes in as zigzag varints, and the whole attempt is deflated.
@@ -160,6 +172,7 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Recording / SampleRate | 60 | Samples per second (10-60). (A config from 1.0 that still says 30 moves to 60 once.) |
 | Recording / RecordWeapons | true | Record the weapon, shots and punches too. |
 | Recording / WorldDetail | Everything | Off (only V1), Enemies (enemies and doors), Everything (whatever moves: much bigger recordings). |
+| Recording / RecordSounds | true | Record the game's own sounds too (not the music), to hear them in a replay. |
 | Recording / ContinueRunsAcrossVisits | true | Leaving a level keeps its run going (off: every visit is a new run). |
 | Recording / KeepRunsPerLevel | 30 | Finished runs kept per level and difficulty (0: all). |
 | Recording / ShowAttemptCounter | true | "ATTEMPT 37" at the start of each attempt. |
@@ -172,6 +185,7 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Replay / ShowWeapons | true | Weapons, shots and punches on the ghosts. |
 | Replay / DeathMarkers | true | A red marker where each attempt died. |
 | Replay / Sounds, Volume | true, 0.6 | A pop for each death, a chime for the win. |
+| Replay / OtherAttemptsVolume | 0.3 | How loud the other attempts' sounds are next to the followed one's (0: only the followed one's). The game's sounds also follow Sounds, Volume and the game's own sound effects volume. |
 | Replay / GhostOpacity | 0.35 | How solid the ghosts are. |
 | Replay / GhostColors | Rainbow | Rainbow, or Progress (red for the first attempts to green for the last). |
 | Replay / GhostModel | V1 | V1, V2 or Crystal (V1 falls back to V2, V2 to Crystal). |
@@ -234,6 +248,7 @@ The code:
 - `src/Recording`:
   - `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit).
   - `WorldRecorder.cs` records the enemies and doors, and `ThingRecorder.cs` everything else.
+  - `SoundRecorder.cs` records the game's sounds.
   - `RawAttempt.cs` is an attempt's samples, and `AttemptCodec.cs` packs them.
   - `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
 - `src/Replay`:
@@ -242,9 +257,11 @@ The code:
   - `WorldPlayback.cs` plays the followed attempt's enemies and doors. `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
   - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
+  - `GameSounds.cs` plays the game's own sounds back, every attempt's.
 - `src/AttemptsMenu.cs` is the ULTRAATTEMPTS menu on the pause screen.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:
   - Recording: scene loads, restarts, the results screen, the camera, doors opening and closing, explosions, beams and breakables.
+  - Recording sounds: the game's Play, PlayOneShot and PlayDelayed, and its virtual audio picking up the sounds that play by themselves.
   - The replay: the camera, Escape, and the results screen's continue.
   - Doors switching rooms off.
 
