@@ -174,14 +174,68 @@ namespace UltraAttempts.Replay
 
         public void RequestFromCheat()
         {
+            RequestFromMenu(null);
+        }
+
+        // Watch from the ULTRAATTEMPTS menu (or the cheat menu): starts once the menus are closed.
+        // folder: another recordings folder of this same level (another difficulty), or null for this one.
+        public void RequestFromMenu(string folder)
+        {
             if (State != Phase.Idle)
             {
                 return;
             }
             origin = Origin.Cheat;
             source = Settings.Source.Value;
+            folderOverride = folder;
             waitingIn = Game.Stats;
             State = Phase.Waiting;
+        }
+
+        // Watch another level's attempts from the menu: load it, then play once V1 has landed in it.
+        public static void WatchLevel(string scene, string folder)
+        {
+            pendingScene = scene;
+            pendingFolder = folder;
+            pendingSince = Time.unscaledTime;
+            pendingReadyAt = -1f;
+            Time.timeScale = 1f;  // (as the pause menu's Quit Mission does)
+            SceneHelper.LoadScene(scene);
+        }
+
+        private static string pendingScene;
+        private static string pendingFolder;
+        private static float pendingSince;
+        private static float pendingReadyAt;
+        private string folderOverride;
+
+        private void WatchWhenLoaded()
+        {
+            if (pendingScene == null)
+            {
+                return;
+            }
+            if (Time.unscaledTime - pendingSince > 90f)
+            {
+                pendingScene = null;  // (never got there)
+                return;
+            }
+            bool there = SceneHelper.CurrentScene == pendingScene && SceneHelper.PendingScene == null && Game.Player != null && Recorder.Instance?.Level != null && !Game.Paused;
+            if (!there)
+            {
+                pendingReadyAt = -1f;
+                return;
+            }
+            if (pendingReadyAt < 0f)
+            {
+                pendingReadyAt = Time.unscaledTime + 1.5f;  // (let V1 land first)
+            }
+            if (Time.unscaledTime >= pendingReadyAt && !Game.Player.dead)
+            {
+                string folder = pendingFolder;
+                pendingScene = null;
+                RequestFromMenu(folder);
+            }
         }
 
         public void CancelFromCheat()
@@ -322,6 +376,43 @@ namespace UltraAttempts.Replay
 
             RawAttempt snapshot = source == ReplaySource.LastFinishedRun ? null : Recorder.Instance.Snapshot();
             string thisRun = Plugin.Store.CurrentRunPath(level.Key, out int runAttempts);
+            if (folderOverride != null && folderOverride != level.Folder)
+            {
+                // Another difficulty's recordings of this level: its own run in progress (the newest
+                // run, if it isn't won or closed), else its last win; not the attempt you're on.
+                level = new LevelInfo
+                {
+                    Key = level.Key + "|other",
+                    Folder = folderOverride,
+                    Scene = level.Scene,
+                    Name = level.Name,
+                    Difficulty = level.Difficulty,
+                    CapsuleHeight = level.CapsuleHeight,
+                    CapsuleRadius = level.CapsuleRadius,
+                    CapsuleCenterY = level.CapsuleCenterY,
+                };
+                snapshot = null;
+                thisRun = null;
+                runAttempts = 0;
+                List<string> runs = SessionStore.RunFiles(folderOverride);
+                if (runs.Count > 0)
+                {
+                    try
+                    {
+                        SessionInfo newest = SessionFile.Scan(runs[runs.Count - 1]);
+                        if (!newest.Complete && !newest.Closed)
+                        {
+                            thisRun = newest.Path;
+                            runAttempts = newest.Attempts;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Plugin.Log.LogWarning("reading the newest run: " + e.Message);
+                    }
+                }
+            }
+            folderOverride = null;
             ReplaySource wanted = source;
             int maxGhosts = Settings.MaxGhosts.Value;
             loading = Task.Run(() => Load(level, wanted, thisRun, runAttempts, snapshot, maxGhosts));
@@ -754,6 +845,7 @@ namespace UltraAttempts.Replay
             {
                 case Phase.Idle:
                     WatchKeyOnResults();
+                    WatchWhenLoaded();
                     return;
                 case Phase.Waiting:
                     WaitForMenu();

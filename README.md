@@ -11,7 +11,9 @@ It records each attempt as you play a level. An attempt runs from the level's st
 
 **After beating a level:** on the results screen, continue as usual. If it took 2 or more attempts, they all play first, then the next level loads. Or press **F8** on the results screen to watch them and come back to the results.
 
-**Any time, from the cheat menu:** turn on ULTRAKILL's cheats (the usual way), open the cheat menu (**Home** or **~**), and under **ATTEMPT REPLAY**:
+**Any time, from the ULTRAATTEMPTS menu:** pause and press **WATCH** (see [the menu](#the-ultraattempts-menu)). No cheats needed.
+
+**Or from the cheat menu:** turn on ULTRAKILL's cheats (the usual way), open the cheat menu (**Home** or **~**), and under **ATTEMPT REPLAY**:
 
 | Cheat | |
 |---|---|
@@ -110,13 +112,16 @@ A run can take days. It carries on across game launches until the level is beate
 ## The ULTRAATTEMPTS menu
 
 Pause the game (or go to the main menu): an **ULTRAATTEMPTS** button sits in the top-left corner. It opens:
-- **This level:** its attempt count and how many since the last win. **RESET** (click twice) starts the count again at 1. The run in progress ends without a win, and every recording stays. **EXPORT** saves the level's runs to a zip.
+- **This level:** its attempt count and how many since the last win.
+  - **WATCH** plays every attempt right away, no cheats needed.
+  - **RESET** (click twice) starts the count again at 1. The run in progress ends without a win, and every recording stays.
+  - **EXPORT** saves the level's runs to a zip.
 - **Settings:**
   - **After beating a level:** play the attempts first, only if you press F8, or never (just save them).
   - **What to record:** everything that moves, V1 with enemies and doors, or only V1.
   - **Ghost model:** V1, V2 or crystals.
   - The "ATTEMPT 37" banner, and recording itself, on or off.
-- **Every level:** each level's count, runs and wins, with **RESET** and **EXPORT** for each.
+- **Every level:** each level's count, runs and wins, with **WATCH**, **RESET** and **EXPORT** for each. WATCH on another level (or from the main menu) loads it, and its attempts play once you've landed. Custom levels can only be watched from inside them.
 - **EXPORT EVERYTHING**, **IMPORT** and **OPEN FOLDER.** Exports go in `BepInEx\UltraAttempts\Exports`. To import, put zips in `BepInEx\UltraAttempts\Import` and press IMPORT:
   - Their runs join your levels; runs you already have are skipped.
   - The zips move to `Import\Done`.

@@ -27,6 +27,7 @@ namespace UltraAttempts.Recording
         public string Level = "";        // its folder's name ("Level 4-2")
         public string Difficulty = "";
         public string Name = "";         // the level's own name, from its runs
+        public string Scene = "";        // its scene, from its runs (to load it)
         public int Attempts;             // the count ("ATTEMPT 37")
         public int Recorded;             // attempts in its runs on disk
         public int Runs;
@@ -459,6 +460,10 @@ namespace UltraAttempts.Recording
                             if (!string.IsNullOrEmpty(info.Header.LevelName))
                             {
                                 summary.Name = info.Header.LevelName;
+                            }
+                            if (!string.IsNullOrEmpty(info.Header.Scene))
+                            {
+                                summary.Scene = info.Header.Scene;
                             }
                             summary.Last = File.GetLastWriteTime(file);
                         }

@@ -129,6 +129,10 @@ namespace UltraAttempts
                 GUILayout.Label($"{here.Name.ToUpperInvariant()}  ({Game.DifficultyName(here.Difficulty).ToUpperInvariant()})", text);
                 GUILayout.Label($"ATTEMPT {count}  |  {thisRun} SINCE THE LAST WIN", text);
                 GUILayout.BeginHorizontal();
+                if (GUILayout.Button("WATCH", button, GUILayout.Width(150f)))
+                {
+                    Watch(here.Folder, here.Scene);
+                }
                 ResetButton(here.Folder, $"{here.Name}: back to attempt 1 (its recordings stay)");
                 if (GUILayout.Button("EXPORT", button, GUILayout.Width(150f)))
                 {
@@ -161,17 +165,23 @@ namespace UltraAttempts
             scroll = GUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
             foreach (LevelSummary level in levels)
             {
-                GUILayout.BeginHorizontal();
                 string wins = level.Wins == 1 ? "1 WIN" : level.Wins + " WINS";
-                GUILayout.Label($"{level.Level.ToUpperInvariant()} {level.Difficulty.ToUpperInvariant()}\nATTEMPT {level.Attempts}  |  {level.Runs} RUN{(level.Runs == 1 ? "" : "S")}, {wins}", text, GUILayout.Width(330f));
+                GUILayout.Label($"{level.Level.ToUpperInvariant()} {level.Difficulty.ToUpperInvariant()}  |  ATTEMPT {level.Attempts}  |  {level.Runs} RUN{(level.Runs == 1 ? "" : "S")}, {wins}", text);
+                GUILayout.BeginHorizontal();
+                // (custom levels can't be loaded from here)
+                if (!string.IsNullOrEmpty(level.Scene) && !level.Level.StartsWith("Custom") && GUILayout.Button("WATCH", button, GUILayout.Width(120f)))
+                {
+                    Watch(level.Folder, level.Scene);
+                }
                 ResetButton(level.Folder, $"{level.Level} {level.Difficulty}: back to attempt 1 (its recordings stay)");
                 if (GUILayout.Button("EXPORT", button, GUILayout.Width(100f)))
                 {
                     string folder = level.Folder;
                     Run(() => "EXPORTED TO " + Short(Plugin.Store.Export(folder)));
                 }
+                GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
-                GUILayout.Space(4f);
+                GUILayout.Space(8f);
             }
             GUILayout.EndScrollView();
 
@@ -204,6 +214,43 @@ namespace UltraAttempts
                 GUILayout.Label(status, text);
             }
             GUILayout.EndArea();
+        }
+
+        // Every attempt at a level, played at once (no cheats needed). Here: once the pause menu closes.
+        // Another level: it loads, then plays once V1 has landed.
+        private void Watch(string folder, string scene)
+        {
+            ReplayDirector director = ReplayDirector.Instance;
+            if (director == null || director.Busy)
+            {
+                return;
+            }
+            LevelInfo here = Recorder.Instance?.Level;
+            if (here != null && scene == here.Scene)
+            {
+                NewMovement nm = Game.Player;
+                if (nm != null && nm.dead)
+                {
+                    status = "RESPAWN FIRST, THEN WATCH";
+                    return;
+                }
+                director.RequestFromMenu(folder == here.Folder ? null : folder);
+                open = false;
+                Game.Get<OptionsManager>()?.UnPause();
+                return;
+            }
+            if (string.IsNullOrEmpty(scene))
+            {
+                status = "CAN'T FIND THAT LEVEL";
+                return;
+            }
+            open = false;
+            if (here != null)
+            {
+                Game.Get<OptionsManager>()?.UnPause();  // (leaving a level from its pause menu)
+            }
+            Plugin.Log.LogInfo($"loading {scene} to watch its attempts");
+            ReplayDirector.WatchLevel(scene, folder);
         }
 
         // RESET, then SURE? for a few seconds: a second click resets.
