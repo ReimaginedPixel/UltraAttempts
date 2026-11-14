@@ -37,8 +37,13 @@ namespace UltraAttempts.Replay
         private int frame;
         private int lookupFrame = -1, lookups;
         private int realDraws, realCapped, overlayCapped;
-        private int levelMoved, levelDrawn;
+        private int levelMoved, levelDrawn, doorParts;
         private bool loggedReal, loggedOverlay;
+        private Material blankMaterial;
+        private bool blankLooked;
+        private readonly HashSet<long> explosionsSeen = new HashSet<long>();
+        private readonly int[] explosionsHow = new int[4];
+        private readonly HashSet<string> explosionsFlat = new HashSet<string>();
 
         // A level object found again by its path: where it was before the replay moved (or hid) it.
         private sealed class Spot
@@ -52,6 +57,7 @@ namespace UltraAttempts.Replay
             public bool Hidden;
             public bool Touched;        // the replay has its home
             public int Placed;          // the frame a track last put it somewhere
+            public bool Door;           // a door (or a part of one): the doors' playback moves it, not this
         }
 
         public ThingPlayback(Camera cam)
@@ -90,7 +96,15 @@ namespace UltraAttempts.Replay
             {
                 Plugin.Log.LogInfo($"replay things: {looks.Summary}; {levelMoved} level objects moved for real, {levelDrawn} drawn instead (not found)"
                     + (realCapped > 0 ? $"; the followed attempt's things were cut at {MaxRealDraws} draws on {realCapped} frames" : "")
-                    + (overlayCapped > 0 ? $"; the other attempts' worlds were cut short on {overlayCapped} frames" : ""));
+                    + (overlayCapped > 0 ? $"; the other attempts' worlds were cut short on {overlayCapped} frames" : "")
+                    + (doorParts > 0 ? $"; {doorParts} door parts left to the doors' own playback" : ""));
+            }
+            if (explosionsSeen.Count > 0)
+            {
+                int[] n = explosionsHow;
+                Plugin.Log.LogInfo($"replay explosions: {n[0]} drawn with their own look, {n[2]} as spheres (recorded before explosions had looks, or their mesh isn't loaded); "
+                    + $"other attempts': {n[1]} in their own mesh, {n[3]} as spheres; ExplosionOpacity {Settings.ExplosionOpacity.Value:0.##}"
+                    + (explosionsFlat.Count > 0 ? $"; drawn flat in their colour, as these materials can't be see-through: {string.Join(", ", explosionsFlat)}" : ""));
             }
             Object.Destroy(glow);
             Object.Destroy(solid);
@@ -140,7 +154,7 @@ namespace UltraAttempts.Replay
                 {
                     // (one object tracked twice, moving again after a rest: an earlier track that has it now wins
                     // over a later one's waiting place; they're in order of when they start)
-                    if (!(at < p.From && spot.Placed == frame))
+                    if (!spot.Door && !(at < p.From && spot.Placed == frame))
                     {
                         moved |= Place(spot, there, pos, rot);
                     }
@@ -209,7 +223,11 @@ namespace UltraAttempts.Replay
                     {
                         continue;
                     }
-                    if (spot != null && spot.T != null)
+                    if (spot != null && spot.Door)
+                    {
+                        // (left to the doors' playback)
+                    }
+                    else if (spot != null && spot.T != null)
                     {
                         Touch(spot);
                         Hide(spot, at >= b.Time);
@@ -239,10 +257,15 @@ namespace UltraAttempts.Replay
                 float age = t - m.Time;
                 if (m.Kind == WorldEventKind.Explosion)
                 {
+                    if (m.Look >= 0 && m.Growth > 0f && DrawExplosion(w, m, i, age, tint))
+                    {
+                        continue;
+                    }
                     if (age > m.Life + ExplosionFade)
                     {
                         continue;
                     }
+                    Tally(w, i, tint.HasValue ? 3 : 2);  // (recorded before explosions had their looks, or its mesh isn't loaded)
                     float k = Mathf.Clamp01(age / m.Life);
                     float radius = Mathf.Max(0.2f, m.Size * (1f - (1f - k) * (1f - k)));
                     float fade = age <= m.Life ? 1f : 1f - (age - m.Life) / ExplosionFade;
@@ -264,6 +287,103 @@ namespace UltraAttempts.Replay
                     c.a = (tint.HasValue ? Mathf.Min(1f, tint.Value.a * 2.5f) : 0.9f) * (1f - k);
                     Draw(cube, Matrix4x4.TRS(m.From + d * 0.5f, Quaternion.LookRotation(d / length), new Vector3(width, width, length)), c, glow);
                 }
+            }
+        }
+
+        // The game's own explosion: its mesh, white for its first 0.1 s (ULTRAKILL's blank material), then in
+        // its own material; growing as Explosion.FixedUpdate grows it (a quarter as fast once it's passed its
+        // size) and fading at 2 a second from then, as Explosion.Update fades it. The followed attempt's are
+        // see-through by ExplosionOpacity; another attempt's (tint) are its mesh in that attempt's colour.
+        // False if its mesh isn't loaded (a sphere instead).
+        private bool DrawExplosion(GhostWorld w, in WorldMoment m, int index, float age, Color? tint)
+        {
+            ResolvedLook r = looks.Get(w, m.Look);
+            if (r == null || r.Meshes.Length == 0)
+            {
+                return false;
+            }
+            float full = m.Color.a > 0.01f ? m.Color.a : 1f;
+            if (age < 0f || age > m.Life + full / 2f)
+            {
+                return true;
+            }
+            float scale = age <= m.Life ? m.StartScale + m.Growth * age : m.StartScale + m.Growth * m.Life + m.Growth * 0.25f * (age - m.Life);
+            float alpha = age <= m.Life ? full : full - 2f * (age - m.Life);
+            if (scale <= 1e-4f || alpha <= 0f)
+            {
+                return true;
+            }
+            Matrix4x4 at = Matrix4x4.TRS(m.From, m.Rot, new Vector3(scale, scale, scale));
+            float opacity = Settings.ExplosionOpacity.Value;
+            bool white = !tint.HasValue && age < WhiteFlash;
+            Material blank = white ? Blank() : null;
+            for (int p = 0; p < r.Meshes.Length; p++)
+            {
+                Mesh mesh = r.Meshes[p];
+                if (mesh == null)
+                {
+                    continue;
+                }
+                Matrix4x4 part = at * r.Local[p];
+                Material[] materials = r.Materials[p];
+                for (int s = 0; s < Math.Max(1, mesh.subMeshCount); s++)
+                {
+                    if (tint.HasValue)
+                    {
+                        Color c = tint.Value;
+                        c.a = Mathf.Min(1f, c.a * 1.5f) * (alpha / full);
+                        block.SetColor(colorId, c);
+                        Graphics.DrawMesh(mesh, part, glow, layer, cam, s, block, false, false, false);
+                        continue;
+                    }
+                    Material mat = white ? blank : materials.Length > 0 ? materials[Math.Min(s, materials.Length - 1)] : null;
+                    Color color = white ? BlankColor(blank) : new Color(m.Color.r, m.Color.g, m.Color.b, 1f);
+                    color.a = alpha * opacity;
+                    // (an opaque material can't be see-through: its colour instead, see-through)
+                    if (mat == null || (opacity < 0.99f && mat.renderQueue < 2450))
+                    {
+                        if (explosionsFlat.Count < 16)
+                        {
+                            explosionsFlat.Add(mat != null ? mat.name : white ? "(no white material)" : "(material not found)");
+                        }
+                        mat = glow;
+                    }
+                    block.SetColor(colorId, color);
+                    Graphics.DrawMesh(mesh, part, mat, layer, cam, s, block, false, false, false);
+                }
+            }
+            Tally(w, index, tint.HasValue ? 1 : 0);
+            return true;
+        }
+
+        // ULTRAKILL's white material (DefaultReferenceManager.blankMaterial), looked up once.
+        private Material Blank()
+        {
+            if (!blankLooked)
+            {
+                blankLooked = true;
+                try
+                {
+                    blankMaterial = Game.Get<DefaultReferenceManager>()?.blankMaterial;
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogWarning("ULTRAKILL's white material isn't there (explosions' first moment is plain white): " + e.Message);
+                }
+            }
+            return blankMaterial;
+        }
+
+        private static Color BlankColor(Material blank) => blank != null && blank.HasProperty("_Color") ? blank.color : Color.white;
+
+        // Each explosion shown, once, for the log: 0 its own look, 1 its own mesh in another attempt's colour,
+        // 2 a sphere, 3 a sphere in another attempt's colour.
+        private void Tally(GhostWorld w, int index, int how)
+        {
+            long key = ((long)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(w) << 32) | (uint)index;
+            if (explosionsSeen.Add(key))
+            {
+                explosionsHow[how]++;
             }
         }
 
@@ -418,8 +538,12 @@ namespace UltraAttempts.Replay
             spot = null;
             if (t != null && !spotOf.TryGetValue(t, out spot))
             {
-                spot = new Spot { T = t };
+                // (a door's own parts, its big doors and sliding panels, are moved by DoorPlayback from the
+                // attempt's doors opening and closing: two of them moving one object would each put back
+                // the other's moves)
+                spot = new Spot { T = t, Door = DoorPlayback.MovesDoorPart(t) };
                 spotOf[t] = spot;
+                doorParts += spot.Door ? 1 : 0;
             }
             levelDrawn += spot == null ? 1 : 0;
             spots[path] = spot;

@@ -105,6 +105,16 @@ namespace UltraAttempts.Replay
         public float FloorY { get; private set; }       // the template's feet, in its own space
         public float Height { get; private set; }       // its feet to the top of its head, in its own space
         public bool LiveBakes => mode == BakeMode.Direct || mode == BakeMode.Copied;
+
+        // The head, for deaths (DeathEffects; Head is null if it couldn't be split off): its own mesh (pose 0's,
+        // around its middle, in the poses' space), and in each pose where its middle is and how it's turned
+        // from pose 0. Each crowd pose then has a second submesh: the body without it.
+        public Mesh Head { get; private set; }
+        public Vector3[] HeadAt { get; private set; }
+        public Quaternion[] HeadTurn { get; private set; }
+        public float HeadSize { get; private set; }     // about its radius, in the poses' space
+        public bool[] Headless { get; private set; }    // per pose: has the headless submesh
+        public string HeadReport { get; private set; } = "no head bone";
         public bool Wings => Label == "V1";
 
         private readonly int layer;
@@ -249,6 +259,9 @@ namespace UltraAttempts.Replay
             var rawNormals = new Vector3[PoseCount][];
             var rawTris = new int[PoseCount][];
             var rawHands = new Vector3[PoseCount];
+            var rawHeads = new Vector3[PoseCount];
+            var rawHeadTurns = new Quaternion[PoseCount];
+            int[] firstCounts = null;
             float floor = 0f, top = 0f;
             for (int pose = 0; pose < PoseCount; pose++)
             {
@@ -266,8 +279,11 @@ namespace UltraAttempts.Replay
                 rawNormals[pose] = normals.ToArray();
                 rawTris[pose] = tris.ToArray();
                 rawHands[pose] = hand != null ? hand.position : Vector3.zero;
+                rawHeads[pose] = head != null ? head.position : Vector3.zero;
+                rawHeadTurns[pose] = head != null ? head.rotation : Quaternion.identity;
                 if (pose == 0)
                 {
+                    firstCounts = counts.ToArray();
                     // Feet to the top of the head (not the wings): the highest point near the head bone.
                     floor = verts.Min(v => v.y);
                     top = floor + (verts.Max(v => v.y) - floor) * 0.92f;
@@ -315,6 +331,22 @@ namespace UltraAttempts.Replay
                     ? new Vector3(rawHands[pose].x, rawHands[pose].y - FloorY, rawHands[pose].z) / Height
                     : new Vector3(0.14f, 0.5f, 0.12f);
             }
+            if (head != null)
+            {
+                try
+                {
+                    SplitHead(bodies, head, firstCounts, raw, rawNormals, rawTris, rawHeads, rawHeadTurns);
+                }
+                catch (Exception e)
+                {
+                    // (the bodies fall over whole, and the second submeshes, if any got made, aren't used)
+                    Head = null;
+                    Headless = null;
+                    HeadAt = null;
+                    HeadReport = $"couldn't split the head off {Label} at '{head.name}' ({e.GetBaseException().Message})";
+                }
+            }
+            ModelMeshes.LogOnce("death animations: " + HeadReport);
             PoseTemplate(animator, PoseKind.Idle, 0f);
             template.SetActive(false);
 
@@ -323,6 +355,154 @@ namespace UltraAttempts.Replay
                 $"{Height:0.00} units tall, animator {Driver.Name} [{Driver.Parameters}], {PoseCount} crowd poses {how}" + (turn != 0f ? $", turned {turn:0} degrees to face forward" : ""));
             return null;
         }
+
+        // Which of the body's triangles are the head: mostly weighted to the head bone or anything under it (or,
+        // if the weights can't be read, near it and above it); then the head on its own, and every pose's body
+        // without it.
+        private void SplitHead(SkinnedMeshRenderer[] bodies, Transform head, int[] counts, Vector3[][] raw, Vector3[][] rawNormals, int[][] rawTris,
+            Vector3[] heads, Quaternion[] turns)
+        {
+            Vector3[] verts = raw[0];
+            var onHead = new bool[verts.Length];
+            string by = "by its bone weights";
+            if (mode == BakeMode.Bones || !WeightedToHead(bodies, head, counts, onHead))
+            {
+                by = "by where it is: its bone weights can't be read";
+                Array.Clear(onHead, 0, onHead.Length);
+                float reach = Mathf.Max(head.parent != null ? Vector3.Distance(head.position, head.parent.position) * 2.5f : 0.3f, 0.05f);
+                for (int v = 0; v < verts.Length; v++)
+                {
+                    onHead[v] = (verts[v] - heads[0]).sqrMagnitude < reach * reach && verts[v].y > heads[0].y - reach * 0.2f;
+                }
+            }
+            int[] tris = rawTris[0];
+            var headTris = new List<int>();
+            var bodyTris = new List<int>(tris.Length);
+            for (int i = 0; i + 2 < tris.Length; i += 3)
+            {
+                int a = tris[i], b = tris[i + 1], c = tris[i + 2];
+                bool isHead = (onHead[a] ? 1 : 0) + (onHead[b] ? 1 : 0) + (onHead[c] ? 1 : 0) >= 2;
+                List<int> into = isHead ? headTris : bodyTris;
+                into.Add(a);
+                into.Add(b);
+                into.Add(c);
+            }
+            int triangles = headTris.Count / 3;
+            if (triangles < 4 || headTris.Count * 2 > tris.Length)
+            {
+                HeadReport = $"no head split from {Label}: {triangles} of {tris.Length / 3} triangles on '{head.name}' ({by})";
+                return;
+            }
+
+            // Its middle in each pose (the poses' space: feet at 0, 1 tall), from the same vertices.
+            var used = new List<int>();
+            var seen = new bool[verts.Length];
+            foreach (int v in headTris)
+            {
+                if (!seen[v])
+                {
+                    seen[v] = true;
+                    used.Add(v);
+                }
+            }
+            HeadAt = new Vector3[PoseCount];
+            HeadTurn = new Quaternion[PoseCount];
+            Headless = new bool[PoseCount];
+            for (int pose = 0; pose < PoseCount; pose++)
+            {
+                Vector3 sum = Vector3.zero;
+                foreach (int v in used)
+                {
+                    sum += v < raw[pose].Length ? raw[pose][v] : verts[v];
+                }
+                Vector3 middle = sum / used.Count;
+                HeadAt[pose] = new Vector3(middle.x, middle.y - FloorY, middle.z) / Height;
+                HeadTurn[pose] = turns[pose] * Quaternion.Inverse(turns[0]);
+                // (the same triangles in every pose: the body without the head as a second submesh)
+                if (rawTris[pose].Length == tris.Length && raw[pose].Length == verts.Length)
+                {
+                    Poses[pose].subMeshCount = 2;
+                    Poses[pose].SetTriangles(bodyTris, 1, calculateBounds: false);
+                    Headless[pose] = true;
+                }
+            }
+
+            var map = new Dictionary<int, int>(used.Count);
+            var headVerts = new List<Vector3>(used.Count);
+            var headNormals = new List<Vector3>(used.Count);
+            float size = 0f;
+            foreach (int v in used)
+            {
+                map[v] = headVerts.Count;
+                Vector3 local = new Vector3(verts[v].x, verts[v].y - FloorY, verts[v].z) / Height - HeadAt[0];
+                headVerts.Add(local);
+                headNormals.Add(rawNormals[0][v]);
+                size = Mathf.Max(size, local.magnitude);
+            }
+            var headIndices = new int[headTris.Count];
+            for (int i = 0; i < headTris.Count; i++)
+            {
+                headIndices[i] = map[headTris[i]];
+            }
+            Head = ModelMeshes.Build($"UltraAttempts {Label} head", headVerts, headNormals, headIndices);
+            HeadSize = Mathf.Max(size, 0.02f);
+            HeadReport = $"head split from {Label} at '{head.name}' bone ({by}), {triangles} triangles";
+        }
+
+        // Each vertex mostly weighted to the head bone or one under it (in the order the poses have them).
+        // False if the weights can't be read.
+        private static bool WeightedToHead(SkinnedMeshRenderer[] bodies, Transform head, int[] counts, bool[] onHead)
+        {
+            if (counts == null || counts.Length != bodies.Length)
+            {
+                return false;
+            }
+            var under = new HashSet<Transform>(head.GetComponentsInChildren<Transform>(true));
+            bool any = false;
+            for (int i = 0, at = 0; i < bodies.Length; at += counts[i], i++)
+            {
+                Mesh mesh = bodies[i].sharedMesh;
+                Mesh copy = null;
+                BoneWeight[] weights = null;
+                try
+                {
+                    if (mesh != null && !mesh.isReadable)
+                    {
+                        // (the game's meshes can't be read from scripts: a copy read back from the GPU can)
+                        copy = ModelMeshes.ReadableCopy(mesh, ModelMeshes.RestBindposes(bodies[i]));
+                        mesh = copy;
+                    }
+                    weights = mesh != null ? mesh.boneWeights : null;
+                }
+                finally
+                {
+                    if (copy != null)
+                    {
+                        Object.Destroy(copy);
+                    }
+                }
+                if (weights == null || weights.Length != counts[i] || at + counts[i] > onHead.Length)
+                {
+                    return false;
+                }
+                Transform[] bones = bodies[i].bones;
+                var isHead = new bool[bones.Length];
+                for (int b = 0; b < bones.Length; b++)
+                {
+                    isHead[b] = bones[b] != null && under.Contains(bones[b]);
+                }
+                for (int v = 0; v < weights.Length; v++)
+                {
+                    BoneWeight w = weights[v];
+                    float sum = On(isHead, w.boneIndex0, w.weight0) + On(isHead, w.boneIndex1, w.weight1) + On(isHead, w.boneIndex2, w.weight2) + On(isHead, w.boneIndex3, w.weight3);
+                    onHead[at + v] = sum >= 0.5f;
+                    any |= onHead[at + v];
+                }
+            }
+            return any;
+        }
+
+        private static float On(bool[] isHead, int bone, float weight) => bone >= 0 && bone < isHead.Length && isHead[bone] ? weight : 0f;
 
         private void PoseTemplate(Animator animator, PoseKind kind, float phase)
         {
@@ -525,6 +705,10 @@ namespace UltraAttempts.Replay
                 {
                     Object.Destroy(mesh);
                 }
+            }
+            if (Head != null)
+            {
+                Object.Destroy(Head);
             }
             foreach (Mesh mesh in owned)
             {

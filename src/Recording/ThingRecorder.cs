@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using HarmonyLib;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -639,8 +640,12 @@ namespace UltraAttempts.Recording
                 look.SizeZ = bounds.size.z;
             }
             look.Color = Rgba(color);
+            return Intern(look);
+        }
 
-            // The same look as one already in this attempt (most things are copies of a few prefabs).
+        // The same look as one already in this attempt (most things are copies of a few prefabs), else a new one.
+        private int Intern(ThingLook look)
+        {
             signature.Clear();
             signature.Append(look.Name).Append('|').Append(look.Color).Append('|');
             signature.Append(Mathf.RoundToInt(look.SizeX * 100f)).Append(',').Append(Mathf.RoundToInt(look.SizeY * 100f)).Append(',').Append(Mathf.RoundToInt(look.SizeZ * 100f));
@@ -732,34 +737,138 @@ namespace UltraAttempts.Recording
             }
             try
             {
-                // How long it grows: ULTRAKILL adds 0.05 * speed to its scale every physics step until its
-                // radius (scale * the collider's) reaches maxSize.
+                // How it grows: ULTRAKILL adds 0.05 * speed to its scale every physics step until its radius
+                // (scale * the collider's) passes maxSize, then a quarter as fast while it fades.
                 Transform t = e.transform;
                 SphereCollider sphere = e.GetComponent<SphereCollider>();
-                float radius = sphere != null ? sphere.radius : 0.5f;
+                float radius = sphere != null && sphere.radius > 1e-4f ? sphere.radius : 0.5f;
                 float parent = t.parent != null ? Mathf.Abs(t.parent.lossyScale.x) : 1f;
-                float perSecond = 0.05f * Mathf.Max(e.speed, 0.01f) * radius * parent / Mathf.Max(Time.fixedDeltaTime, 0.001f);
-                float now = Mathf.Abs(t.lossyScale.x) * radius;
-                float grow = Mathf.Clamp((e.maxSize - now) / Mathf.Max(perSecond, 0.01f), 0.04f, 3f);
+                float step = Mathf.Max(Time.fixedDeltaTime, 0.001f);
+                float scale = Mathf.Abs(t.lossyScale.x);
+                float scalePerStep = 0.05f * Mathf.Max(e.speed, 0.01f) * parent;
+                // (the physics step that takes it past maxSize is the one it starts fading on)
+                int steps = Mathf.FloorToInt(Mathf.Max(0f, e.maxSize / radius - scale) / Mathf.Max(scalePerStep, 1e-4f)) + 1;
+                float grow = Mathf.Clamp(steps * step, 0.02f, 3f);
                 Vector3 p = t.position;
-                Event(new WorldEvent
+                Recorder.Quantize(t.rotation, out short rx, out short ry, out short rz, out short rw);
+                var ev = new WorldEvent
                 {
                     Sample = sample,
                     Kind = WorldEventKind.Explosion,
                     X = Recorder.Cm(p.x), Y = Recorder.Cm(p.y), Z = Recorder.Cm(p.z),
-                    ToX = Recorder.Cm(p.x), ToY = Recorder.Cm(p.y), ToZ = Recorder.Cm(p.z),
                     Size = Mathf.RoundToInt(Mathf.Clamp(e.maxSize, 0f, 1000f) * 1000f),
                     Life = Mathf.RoundToInt(grow * 1000f),
-                    Color = Rgba(color),
-                    Look = -1,
+                    Color = Rgba(ExplosionColor(e, color)),
+                    Look = ExplosionLook(e, scale),
                     Path = -1,
-                    RotW = 32767,
-                });
+                    RotX = rx, RotY = ry, RotZ = rz, RotW = rw,
+                };
+                ExplosionGrowth.Put(ref ev, scale, scalePerStep / step);
+                Event(ev);
             }
             catch (Exception ex)
             {
                 Fail(ex);
             }
+        }
+
+        // Explosion's own private fields: the material it had before it turned white for a moment, and its
+        // colour (Start has swapped the renderer's material for a copy of the white one by now).
+        private static AccessTools.FieldRef<Explosion, Material> originalMaterial;
+        private static AccessTools.FieldRef<Explosion, Color> materialColor;
+        private static bool explosionFieldsTried;
+
+        private static void ExplosionFields()
+        {
+            if (explosionFieldsTried)
+            {
+                return;
+            }
+            explosionFieldsTried = true;
+            try
+            {
+                originalMaterial = AccessTools.FieldRefAccess<Explosion, Material>("originalMaterial");
+                materialColor = AccessTools.FieldRefAccess<Explosion, Color>("materialColor");
+            }
+            catch (Exception e)
+            {
+                originalMaterial = null;
+                materialColor = null;
+                Plugin.Log.LogWarning("explosions' own materials can't be read (a game update?), so replays draw them as coloured spheres: " + e.Message);
+            }
+        }
+
+        private static Color ExplosionColor(Explosion e, Color given)
+        {
+            ExplosionFields();
+            return materialColor != null ? materialColor(e) : given;
+        }
+
+        // Its mesh in the material it had before Start made it white (none: the replay draws a sphere).
+        private int ExplosionLook(Explosion e, float scale)
+        {
+            try
+            {
+                return TryExplosionLook(e, scale);
+            }
+            catch (Exception ex)
+            {
+                if (!warnedExplosionLook)
+                {
+                    warnedExplosionLook = true;
+                    Plugin.Log.LogWarning("an explosion's look couldn't be recorded (it replays as a sphere): " + ex.Message);
+                }
+                return -1;
+            }
+        }
+
+        private static bool warnedExplosionLook;
+
+        private int TryExplosionLook(Explosion e, float scale)
+        {
+            ExplosionFields();
+            MeshRenderer mr = e.GetComponent<MeshRenderer>();
+            Material original = originalMaterial != null ? originalMaterial(e) : null;
+            MeshFilter filter = mr != null ? mr.GetComponent<MeshFilter>() : null;
+            Mesh mesh = filter != null ? filter.sharedMesh : null;
+            if (mesh == null || original == null || attempt.Looks.Count >= MaxLooks)
+            {
+                return -1;
+            }
+            Transform root = e.transform;
+            Matrix4x4 local = Matrix4x4.TRS(root.position, root.rotation, Vector3.one * Mathf.Max(scale, 1e-4f)).inverse * mr.transform.localToWorldMatrix;
+            Quaternion rotation = local.rotation;
+            Vector3 size = local.lossyScale;
+            Material[] materials = mr.sharedMaterials;
+            var names = new string[Math.Max(1, materials.Length)];
+            for (int i = 0; i < names.Length; i++)
+            {
+                // (the first is the white copy Start put in: the one it had before goes there)
+                names[i] = i == 0 ? CleanMaterial(original.name) : materials[i] != null ? CleanMaterial(materials[i].name) : "";
+            }
+            Bounds b = mesh.bounds;
+            var bounds = new Bounds(local.MultiplyPoint3x4(b.center), Vector3.zero);
+            for (int corner = 0; corner < 8; corner++)
+            {
+                bounds.Encapsulate(local.MultiplyPoint3x4(b.center + Vector3.Scale(b.extents, new Vector3((corner & 1) != 0 ? 1f : -1f, (corner & 2) != 0 ? 1f : -1f, (corner & 4) != 0 ? 1f : -1f))));
+            }
+            var look = new ThingLook
+            {
+                Name = Game.CleanName(root.name),
+                Color = Rgba(ExplosionColor(e, original.HasProperty("_Color") ? original.color : Color.white)),
+                CenterX = bounds.center.x, CenterY = bounds.center.y, CenterZ = bounds.center.z,
+                SizeX = bounds.size.x, SizeY = bounds.size.y, SizeZ = bounds.size.z,
+            };
+            look.Parts.Add(new LookPart
+            {
+                Mesh = mesh.name,
+                Vertices = mesh.vertexCount,
+                Materials = names,
+                PX = local.m03, PY = local.m13, PZ = local.m23,
+                RX = rotation.x, RY = rotation.y, RZ = rotation.z, RW = rotation.w,
+                SX = size.x, SY = size.y, SZ = size.z,
+            });
+            return Intern(look);
         }
 
         // A hitscan beam (the revolver's, the railcannon's, a coin's ricochet, an enemy's).

@@ -26,7 +26,7 @@ As with any of ULTRAKILL's cheats, turning cheats on mid-level means that level 
 
 ### Cameras
 
-- **Next to die:** through the eyes of whichever attempt dies next. When it dies the screen flashes red and the camera cuts to the next one to die, until only the winner is left. It skips attempts that die within 0.75 s of a cut, so the early deaths don't flicker past.
+- **Next to die:** through the eyes of whichever attempt dies next. When it dies the camera backs out of its head to watch the head fly off, then the screen flashes red and the camera cuts to the next one to die, until only the winner is left. It skips attempts that die within 0.75 s of a cut, so the early deaths don't flicker past.
 - **Best run:** through the eyes of the winning attempt (or the fastest finish; if none finished, the one that lived longest).
 - **Overview:** behind and above every attempt still alive, framing them all as the pack thins out. The mouse moves it around and the wheel zooms.
 - **Free cam:** fly anywhere: WASD, the mouse, Q/E down/up, Shift fast, Ctrl slow, the wheel for speed.
@@ -63,7 +63,9 @@ Each attempt is V1: the third-person V1 from the platformer secret level, at V1'
 - **The rest of the crowd** are see-through and tinted in their own colour. The winner is gold, and the attempt you were on when you opened the replay is white.
 - **The 24 nearest** are fully animated (**AnimatedGhosts**). Everyone else uses V1 posed in 13 ways (a run cycle, jump, fall, slide, dash), so a crowd of a thousand still moves like V1s and stays fast.
 
-Each ghost shows a tracer for every shot (up to where it hit the level) and throws its punches. It flashes red when hurt. Where an attempt died it bursts, and a red marker stays (M hides them). The winner leaves a gold trail.
+Each ghost shows a tracer for every shot (up to where it hit the level) and throws its punches. It flashes red when hurt. The winner leaves a gold trail.
+
+When an attempt dies, its head pops off and flies: up and on the way it was going, spinning, bouncing off the floor and walls until it comes to rest. Its body falls over where it stood, blood bursts from the neck and pools under it, and after a couple of seconds it all fades. A red marker stays where it died (M hides them). The crystal ghosts shatter instead. It's only drawn (no gore is left in the level), and it stays cheap with 30 attempts dying in the same spot. **DeathAnimations** turns it off (then they just pop).
 
 If V1's model can't be loaded, the ghosts are V2 instead, and if that fails too, the plain crystals from 1.0. **GhostModel** can also pick them. `BepInEx\LogOutput.log` says which it used.
 
@@ -71,7 +73,7 @@ If V1's model can't be loaded, the ghosts are V2 instead, and if that fails too,
 
 Following an attempt (next to die, best run, or Q/E) shows its world as it was:
 - **Its enemies:** the real enemy models, animated, where they were, taking its hits and dying when it killed them.
-- **Its doors:** opening and closing when they did for it.
+- **Its doors:** opening and closing when they did for it, every kind: sliding doors, big doors that swing open (the way it opened them, from the side it came from) and doors with sliding or animated panels, each at its own speed. A door it never got to stays as it was before any attempt opened it.
 - **The level's own enemies,** frozen where the replay stopped them, hide meanwhile.
 
 In the overview and free cam, the winner's world shows. Everything goes back exactly as it was when the replay ends.
@@ -85,7 +87,7 @@ With **WorldDetail** = Everything (the default), each attempt also records every
 When you follow that attempt:
 - Its projectiles and debris are drawn in their real materials.
 - The level's platforms and props move as they did for it, and go back afterwards.
-- Its explosions and beams play, and what it broke breaks.
+- Its explosions are the game's own: white for a moment, then their colour, growing and fading as the game does it, see-through (**ExplosionOpacity**) so they don't hide the fight. Its beams play, and what it broke breaks.
 
 The other attempts' worlds play at the same time: the 20 nearest living attempts, each see-through in its own colour, with their enemies, props, projectiles, explosions and beams. So all your attempts' fights happen on top of each other.
 - **O** turns them on and off, and the HUD says how many are showing.
@@ -198,6 +200,8 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Replay / MinShotSeconds | 0.75 | Next-to-die camera: the shortest a shot lasts. |
 | Replay / RevealRooms | true | Bring back rooms switched off behind doors while a replay plays. |
 | Replay / Loop | false | Start over at the end. |
+| Replay / ExplosionOpacity | 0.5 | How solid the followed attempt's explosions are (1: as in the game). |
+| Replay / DeathAnimations | true | Heads fly off, bodies fall over, blood (and the camera backs out to watch). Off: they just pop. |
 | Keys / Watch, Exit | F8, Backspace | Watch on the results screen; leave a replay. |
 
 It records the levels (and custom levels), not the main menu, the Cyber Grind or the sandbox.
@@ -254,7 +258,7 @@ The code:
 - `src/Replay`:
   - `ReplayDirector.cs` freezes the level, loads the attempts on a background task, runs the clock, the cameras and the controls, then puts everything back. `Ghost.cs` is one attempt ready to play: smooth curves through its samples, its world.
   - `GhostRenderer.cs`, `GhostModels.cs` and `WeaponModels.cs` draw the V1 ghosts, their weapons, bursts, markers, tracers and trails onto ULTRAKILL's camera, so they get its pixelation and palette.
-  - `WorldPlayback.cs` plays the followed attempt's enemies and doors. `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds.
+  - `WorldPlayback.cs` plays the followed attempt's enemies, and `DoorPlayback.cs` its doors. `DeathEffects.cs` is the deaths (heads, bodies, blood). `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
   - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
   - `GameSounds.cs` plays the game's own sounds back, every attempt's.
