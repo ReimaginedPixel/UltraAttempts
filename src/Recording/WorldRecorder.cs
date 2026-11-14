@@ -102,7 +102,7 @@ namespace UltraAttempts.Recording
                 {
                     if (door != null)
                     {
-                        Record(door, 0);
+                        Record(door, 0, found: true);
                     }
                 }
             }
@@ -191,7 +191,7 @@ namespace UltraAttempts.Recording
                     {
                         foreach (Door inside in room.GetComponentsInChildren<Door>())
                         {
-                            Record(inside, sample);
+                            Record(inside, sample, found: true);
                         }
                     }
                 }
@@ -342,8 +342,9 @@ namespace UltraAttempts.Recording
         internal static short Coarse(short value) =>
             (short)(Mathf.Clamp(Mathf.RoundToInt(value / (float)RotationStep), short.MinValue / RotationStep, short.MaxValue / RotationStep) * RotationStep);
 
-        // Records a door's state if this attempt hasn't got it already (true if it was recorded).
-        private bool Record(Door door, int sample)
+        // Records a door's state if this attempt hasn't got it already (true if it was recorded). found: it was
+        // just noticed like this (not opened or closed now).
+        private bool Record(Door door, int sample, bool found = false)
         {
             int key = door.GetInstanceID();
             bool open = door.open;
@@ -365,8 +366,24 @@ namespace UltraAttempts.Recording
             }
             known.Open = open;
             doors[key] = known;
-            attempt.Events.Add(new AttemptEvent { Sample = sample, Kind = EventKind.Door, A = known.Index, B = open ? 1 : 0 });
+            attempt.Events.Add(new AttemptEvent { Sample = sample, Kind = EventKind.Door, A = known.Index, B = open ? 1 : 0, C = (int)Detail(door, found) });
             return true;
+        }
+
+        // Whether it was found like this, and which way a big door swings (Door.Open has just told its big doors:
+        // DoorController sets the way from the side V1 comes from).
+        private static DoorDetail Detail(Door door, bool found)
+        {
+            DoorDetail d = DoorDetail.Recorded | (found ? DoorDetail.AsFound : DoorDetail.None);
+            if (door.doorType == DoorType.BigDoorController)
+            {
+                BigDoor big = door.GetComponentInChildren<BigDoor>(true);
+                if (big != null ? big.reverseDirection : door.reverseDirection)
+                {
+                    d |= DoorDetail.Reversed;
+                }
+            }
+            return d;
         }
 
         // Something in the game didn't look as expected: the rest of this attempt goes without its world

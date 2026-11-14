@@ -74,6 +74,7 @@ namespace UltraAttempts.Replay
             public int Sample;
             public int Door;        // index into DoorPaths
             public bool Open;
+            public DoorDetail Detail;
         }
 
         private struct UpChange
@@ -202,7 +203,7 @@ namespace UltraAttempts.Replay
                 }
                 else if (e.Kind == EventKind.Door && e.A >= 0)
                 {
-                    doors.Add(new DoorChange { Sample = e.Sample, Door = e.A, Open = e.B != 0 });
+                    doors.Add(new DoorChange { Sample = e.Sample, Door = e.A, Open = e.B != 0, Detail = (DoorDetail)e.C });
                 }
             }
             g.Weapons = weapons.ToArray();

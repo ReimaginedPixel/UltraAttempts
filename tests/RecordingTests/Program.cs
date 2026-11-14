@@ -34,6 +34,7 @@ internal static class Program
         try
         {
             Codec();
+            Details();
             OldAttempts();
             Damage();
             Compression();
@@ -596,6 +597,40 @@ internal static class Program
         Check(threw, "a cut-short attempt is refused, not misread");
     }
 
+    // What newer recordings keep in fields older ones left at 0 (no format change): how an explosion grows (in
+    // its To, which explosions didn't use) with its look, and what a door event says about the door (its C).
+    private static void Details()
+    {
+        Console.WriteLine("explosions and doors");
+        RawAttempt a = Sample(7, 40, 7, world: false);
+        a.Looks.Add(new ThingLook { Name = "Explosion Big", Color = 0xFF8020C0u, Parts = { new LookPart { Mesh = "Sphere", Vertices = 515, Materials = new[] { "Explosion" }, RW = 1f, SX = 1f, SY = 1f, SZ = 1f } } });
+        var grows = new WorldEvent { Sample = 3, Kind = WorldEventKind.Explosion, X = -12_345_678, Y = 789, Z = 42, Size = 5500, Life = 280, Color = 0xFF8020C0u, Look = 0, Path = -1, RotY = 23170, RotW = 23170 };
+        ExplosionGrowth.Put(ref grows, 1.25f, 37.5f);
+        var old = new WorldEvent { Sample = 4, Kind = WorldEventKind.Explosion, X = 5, Y = 6, Z = 7, ToX = 5, ToY = 6, ToZ = 7, Size = 1000, Life = 100, Color = 0xFFFFFFFFu, Look = -1, Path = -1, RotW = 32767 };
+        var odd = new WorldEvent { Sample = 5, Kind = WorldEventKind.Explosion, X = 100_000_000, Y = -100_000_000, Z = 0, Size = 1, Life = 20, Look = 0, Path = -1, RotW = 32767 };
+        ExplosionGrowth.Put(ref odd, float.NaN, 1e12f);
+        a.WorldEvents.Add(grows);
+        a.WorldEvents.Add(old);
+        a.WorldEvents.Add(odd);
+        int door = a.AddDoorPath("Level#0/2 - Arena#0/Big Door#0");
+        int other = a.AddDoorPath("Level#0/2 - Arena#0/Door#1");
+        a.Events.Add(new AttemptEvent { Sample = 0, Kind = EventKind.Door, A = door, B = 0, C = (int)(DoorDetail.Recorded | DoorDetail.AsFound) });
+        a.Events.Add(new AttemptEvent { Sample = 0, Kind = EventKind.Door, A = other, B = 1, C = 0 });
+        a.Events.Add(new AttemptEvent { Sample = 20, Kind = EventKind.Door, A = door, B = 1, C = (int)(DoorDetail.Recorded | DoorDetail.Reversed) });
+        RawAttempt b = RoundTrip(a);
+        Check(Same(a, b), "an explosion with its look and how it grows, and doors with what's known about them, come back exactly");
+        WorldEvent e = b.WorldEvents[0];
+        Check(Math.Abs(ExplosionGrowth.StartScale(e) - 1.25f) < 1e-6f && Math.Abs(ExplosionGrowth.PerSecond(e) - 37.5f) < 1e-6f && e.Look == 0 && e.Size == 5500 && e.Life == 280
+            && e.Color == 0xFF8020C0u && e.RotY == 23170 && e.ToZ == e.Z, "...the explosion's scale as it went off, how fast it grows, its look, size, time, colour and turn");
+        Check(ExplosionGrowth.StartScale(b.WorldEvents[1]) == 0f && ExplosionGrowth.PerSecond(b.WorldEvents[1]) == 0f && b.WorldEvents[1].Look == -1,
+            "...one recorded before then says it doesn't know how it grows (the replay draws a sphere)");
+        Check(ExplosionGrowth.StartScale(b.WorldEvents[2]) == 0f && ExplosionGrowth.PerSecond(b.WorldEvents[2]) == 1000f, "...nonsense (NaN, huge) is kept in bounds");
+        List<AttemptEvent> doors = b.Events.Where(d => d.Kind == EventKind.Door).ToList();
+        Check(doors.Count == 3 && (DoorDetail)doors[0].C == (DoorDetail.Recorded | DoorDetail.AsFound) && (DoorDetail)doors[1].C == DoorDetail.None
+            && (DoorDetail)doors[2].C == (DoorDetail.Recorded | DoorDetail.Reversed) && doors[2].B == 1 && doors[2].Sample == 20,
+            "doors: found shut at the start, one from an older recording (nothing known), opened from the other side");
+    }
+
     // An attempt recorded by UltraAttempts 1.0: format 1, written by its own encoder (commit bf1d01f)
     // from OldAttempt() below.
     private const string Version1Attempt =
@@ -955,6 +990,9 @@ internal static class Program
                 Parts = { new LookPart { Mesh = kind + " mesh", Vertices = 24 * kind.Length, Materials = new[] { kind + " material", "Glow" }, RW = 1f, SX = 1f, SY = 1f, SZ = 1f } },
             });
         }
+        // (explosions as they're recorded now: their own mesh and material, and how they grow)
+        int explosionLook = a.Looks.Count;
+        a.Looks.Add(new ThingLook { Name = "Explosion", Color = 0xFFA040FFu, SizeX = 1f, SizeY = 1f, SizeZ = 1f, Parts = { new LookPart { Mesh = "Sphere", Vertices = 515, Materials = new[] { "Explosion" }, RW = 1f, SX = 1f, SY = 1f, SZ = 1f } } });
         a.Looks.Add(new ThingLook { Name = "Platform", Parts = { new LookPart { Mesh = "Cube", Vertices = 24, Materials = new[] { "Metal" }, SX = 8f, SY = 0.5f, SZ = 8f, RW = 1f } } });
         int platformPath = a.AddThingPath("Level#0/3 - Shaft#0/Elevator#0");
         int id = 0;
@@ -988,11 +1026,13 @@ internal static class Program
             }
             if (tick % 40 == 0)
             {
-                a.WorldEvents.Add(new WorldEvent
+                var explosion = new WorldEvent
                 {
                     Sample = tick * stride, Kind = WorldEventKind.Explosion, X = random.Next(-3000, 3000), Y = 200, Z = random.Next(-3000, 3000),
-                    Size = 5500, Life = 250, Color = 0xFFA040FFu, Look = -1, Path = -1,
-                });
+                    Size = 5500, Life = 250, Color = 0xFFA040FFu, Look = explosionLook, Path = -1, RotW = 32767,
+                };
+                ExplosionGrowth.Put(ref explosion, 1f, 2.5f * (1 + random.Next(3)));
+                a.WorldEvents.Add(explosion);
             }
             if (tick % 9 == 0)
             {

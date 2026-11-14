@@ -63,6 +63,7 @@ namespace UltraAttempts.Replay
         private readonly Vector3[] trailPoints = new Vector3[512];
 
         private readonly WeaponModels guns;
+        private readonly DeathEffects deaths;
         private readonly GhostModelKit kit;
         private readonly Transform modelRoot;
         private readonly GhostFrameHook hook;
@@ -145,6 +146,7 @@ namespace UltraAttempts.Replay
             bestTrail = MakeTrail(root, "best trail");
             followTrail = MakeTrail(root, "follow trail");
             guns = new WeaponModels(root, layer);
+            deaths = new DeathEffects(cam, layer, ghost, cube, sphere, body, StartOf);
 
             var models = new GameObject("UltraAttempts ghost models");
             models.transform.SetParent(root, false);
@@ -170,6 +172,10 @@ namespace UltraAttempts.Replay
             if (hook != null)
             {
                 hook.Late = null;
+            }
+            if (deaths.Any)
+            {
+                Plugin.Log.LogInfo(deaths.Summary + "; " + (Models ? kit.HeadReport : "crystals: they shatter"));
             }
             foreach (LivePuppet p in puppets)
             {
@@ -874,15 +880,104 @@ namespace UltraAttempts.Replay
 
         // ---------------------------------------------------------------- bursts, markers, tracers, trails
 
+        private const float BurstLife = 0.55f;
+
+        // Every attempt that ended a moment ago (byEnd: by when they end): a death plays its death animation
+        // (DeathAnimations), anything else (or a death that can't be worked out this frame) pops. follow: the
+        // attempt the camera follows (its death is drawn clearer).
+        public void DrawEndings(Ghost[] byEnd, float t, Ghost follow)
+        {
+            bool animate = Settings.DeathAnimations.Value;
+            GhostModelKit model = Models ? kit : null;
+            deaths.BeginFrame(t);
+            float opacity = Settings.GhostOpacity.Value;
+            for (int i = FirstEndingAfter(byEnd, t - (animate ? DeathEffects.Life : BurstLife)); i < byEnd.Length && byEnd[i].Duration <= t; i++)
+            {
+                Ghost g = byEnd[i];
+                float age = t - g.Duration;
+                if (animate && g.EndReason == AttemptEnd.Death && deaths.Draw(g, age, model, g == follow || g.IsBest ? 0.85f : opacity))
+                {
+                    continue;
+                }
+                if (age <= BurstLife)
+                {
+                    Ghost.Pose end = g.EndPose;
+                    DrawBurst(g, end.Body + end.Up * 0.5f, age);
+                }
+            }
+            if (animate)
+            {
+                // (worked out a moment before they happen, a few a frame)
+                for (int i = FirstEndingAfter(byEnd, t); i < byEnd.Length && byEnd[i].Duration <= t + 1f; i++)
+                {
+                    if (byEnd[i].EndReason == AttemptEnd.Death)
+                    {
+                        deaths.Ahead(byEnd[i], model);
+                    }
+                }
+            }
+        }
+
+        // Where a dying attempt's head is t seconds into the replay (DeathAnimations), for the camera.
+        public bool DeathHead(Ghost g, float t, out Vector3 at) => deaths.HeadAt(g, t - g.Duration, out at);
+
+        // How it was as it died: where its feet were, which way its body faced (where it ran, or looked), the
+        // crowd pose it was in, how fast it was going.
+        private DeathStart StartOf(Ghost g)
+        {
+            Ghost.Pose end = g.EndPose;
+            GhostMotion m = GhostMotion.Of(g, end, g.Duration);
+            m.Airborne = !m.Grounded && !m.Sliding;
+            Vector3 look = Flat(end.Look * Vector3.forward, end.Up);
+            if (look == Vector3.zero)
+            {
+                look = Flat(end.Look * Vector3.up, end.Up);
+            }
+            if (look == Vector3.zero)
+            {
+                look = Flat(Vector3.forward, end.Up) != Vector3.zero ? Flat(Vector3.forward, end.Up) : Vector3.right;
+            }
+            Vector3 facing = m.Heading != Vector3.zero && (m.Running || m.Sliding || m.Dashing) ? m.Heading : look;
+            return new DeathStart
+            {
+                Bottom = Bottom(g, end, g.Duration),
+                Rot = Quaternion.LookRotation(facing, end.Up),
+                Up = end.Up,
+                Height = g.CapsuleHeight * ModelHeight,
+                Pose = GhostModelKit.PoseIndex(m.Kind, 0.25f),
+                Velocity = m.Velocity,
+                Eye = end.Eye,
+                Look = end.Look,
+            };
+        }
+
+        // Index of the first ghost (sorted by Duration) still alive at t.
+        private static int FirstEndingAfter(Ghost[] sorted, float time)
+        {
+            int lo = 0, hi = sorted.Length;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (sorted[mid].Duration <= time)
+                {
+                    lo = mid + 1;
+                }
+                else
+                {
+                    hi = mid;
+                }
+            }
+            return lo;
+        }
+
         // The pop where an attempt ends: a sphere bursting out, and shards flying off. age: seconds since.
         public void DrawBurst(Ghost g, Vector3 at, float age)
         {
-            const float life = 0.55f;
-            if (age < 0f || age > life)
+            if (age < 0f || age > BurstLife)
             {
                 return;
             }
-            float k = age / life;
+            float k = age / BurstLife;
             float ease = 1f - (1f - k) * (1f - k);
             bool finish = g.Finished;
             Color c = finish ? Gold : g.Color;

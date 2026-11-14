@@ -34,6 +34,7 @@ namespace UltraAttempts.Replay
         private const string StateKey = "ultraattempts-replay";
         private const float BlendTime = 0.4f;
         private const float DeathHold = 0.3f;
+        private const float DeathAnimationHold = 1.1f;   // (DeathAnimations: long enough to see its head fly)
         private const float EndPadding = 0.75f;
         private const float SummarySeconds = 4f;
         private const float ChaseLag = 0.12f;
@@ -1242,7 +1243,7 @@ namespace UltraAttempts.Replay
         {
             if (manual != null)
             {
-                if (t < manual.Duration + DeathHold)
+                if (t < manual.Duration + HoldAfter(manual))
                 {
                     autoPicked = false;
                     return manual;
@@ -1266,7 +1267,7 @@ namespace UltraAttempts.Replay
         // past); once nothing else will die, the winner.
         private Ghost NextToDie()
         {
-            if (Follow != null && autoPicked && Follow.Dies && t < Follow.Duration + DeathHold)
+            if (Follow != null && autoPicked && Follow.Dies && t < Follow.Duration + HoldAfter(Follow))
             {
                 return Follow;
             }
@@ -1338,6 +1339,10 @@ namespace UltraAttempts.Replay
                 {
                     pos = followPose.Eye;
                     rot = followPose.Look;
+                    if (t > Follow.Duration && Follow.EndReason == AttemptEnd.Death && Settings.DeathAnimations.Value)
+                    {
+                        WatchDeath(t - Follow.Duration, ref pos, ref rot);
+                    }
                 }
                 else
                 {
@@ -1371,6 +1376,31 @@ namespace UltraAttempts.Replay
                     camPos += Shake(Follow, Mathf.Min(t, Follow.Duration));
                 }
             }
+        }
+
+        // How long the camera stays on an attempt after it ends.
+        private static float HoldAfter(Ghost g) => g.EndReason == AttemptEnd.Death && Settings.DeathAnimations.Value ? DeathAnimationHold : DeathHold;
+
+        // Through a dying attempt's eyes (DeathAnimations): the camera backs out of its head, behind and above
+        // where it looked, and turns to watch its head fly off.
+        private void WatchDeath(float age, ref Vector3 pos, ref Quaternion rot)
+        {
+            float k = Mathf.SmoothStep(0f, 1f, age / 0.4f);
+            Vector3 up = followPose.Up;
+            Vector3 ahead = Vector3.ProjectOnPlane(rot * Vector3.forward, up);
+            if (ahead.sqrMagnitude < 1e-4f)
+            {
+                ahead = Vector3.ProjectOnPlane(rot * Vector3.up, up);
+            }
+            ahead = ahead.normalized;
+            Vector3 from = Vector3.Lerp(pos, Collide(pos, pos - ahead * 3.5f + up * 1.5f), k);
+            Vector3 target = renderer.DeathHead(Follow, t, out Vector3 head) ? Vector3.Lerp(head, pos, 0.35f) : pos;
+            Vector3 toward = target - from;
+            if (toward.sqrMagnitude > 0.01f)
+            {
+                rot = Quaternion.Slerp(rot, Quaternion.LookRotation(toward, up), k);
+            }
+            pos = from;
         }
 
         // Behind and above the followed attempt. Its mouse turns it at once; the camera swings round after
@@ -1659,12 +1689,7 @@ namespace UltraAttempts.Replay
             }
             DrawOverlays(shown);
 
-            for (int i = FirstEndingAfter(byEnd, t - 0.6f); i < byEnd.Length && byEnd[i].Duration <= t; i++)
-            {
-                Ghost g = byEnd[i];
-                Ghost.Pose end = g.EndPose;
-                renderer.DrawBurst(g, end.Body + end.Up * 0.5f, t - g.Duration);
-            }
+            renderer.DrawEndings(byEnd, t, Following ? Follow : null);
             if (markers)
             {
                 renderer.DrawMarkers(FirstEndingAfter(deaths, t));

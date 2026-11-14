@@ -44,14 +44,7 @@ namespace UltraAttempts.Replay
         private bool kindThisFrame;
         private int statesAsked, statesFound;          // (for the log: do the recorded animations match the copies?)
 
-        private readonly Dictionary<string, DoorSpot> spots = new Dictionary<string, DoorSpot>();
-        private readonly Dictionary<Door, DoorSpot> spotOf = new Dictionary<Door, DoorSpot>();  // (two paths, one door: one spot)
-        private readonly List<DoorSpot> moved = new List<DoorSpot>();
-        private Ghost doorsOf;
-        private DoorSpot[] shownDoors = Array.Empty<DoorSpot>();   // per door of the attempt shown
-        private bool[] doorKnown = Array.Empty<bool>();
-        private bool[] doorOpen = Array.Empty<bool>();
-        private float[] doorSince = Array.Empty<float>();
+        private readonly DoorPlayback doors = new DoorPlayback();
 
         // A kind of enemy: a stripped copy of it (kept inactive) to clone, and where the enemy's own
         // transform (the one recorded) sits in it.
@@ -79,15 +72,6 @@ namespace UltraAttempts.Replay
             public int Playing = -1;    // the state it was put in last (0: left to play on its own)
         }
 
-        private sealed class DoorSpot
-        {
-            public Door Door;
-            public Transform T;
-            public bool Moved;
-            public Vector3 Home;        // where it was before the replay moved it
-            public bool HomeInPos;
-        }
-
         public WorldPlayback(Camera cam, Transform holder)
         {
             this.cam = cam;
@@ -104,7 +88,6 @@ namespace UltraAttempts.Replay
         public void Prepare(IList<Ghost> ghosts)
         {
             var most = new Dictionary<int, int>();
-            var paths = new HashSet<string>();
             bool anyWorld = false;
             foreach (Ghost g in ghosts)
             {
@@ -113,10 +96,6 @@ namespace UltraAttempts.Replay
                 foreach (KeyValuePair<int, int> kv in g.MostAtOnce)
                 {
                     most[kv.Key] = Math.Max(most.TryGetValue(kv.Key, out int m) ? m : 0, kv.Value);
-                }
-                foreach (string path in g.DoorPaths)
-                {
-                    paths.Add(path ?? "");
                 }
             }
             if (!Settings.ShowWorld.Value)
@@ -145,16 +124,10 @@ namespace UltraAttempts.Replay
                     copies++;
                 }
             }
-            int movable = 0;
-            foreach (string path in paths)
-            {
-                if (Spot(path) != null)
-                {
-                    movable++;
-                }
-            }
+            string doorLine = doors.Prepare(ghosts);
             SetLevelHidden(anyEnemies);
-            Plugin.Log.LogInfo($"replay world: {models} of {most.Count} kinds of enemy modelled ({copies} copies ready, {overlayMeshes} see-through for the other attempts), {movable} of {paths.Count} doors movable, {hidden.Count} of the level's enemy renderers hidden, {(Time.realtimeSinceStartup - started) * 1000f:0} ms");
+            Plugin.Log.LogInfo($"replay world: {models} of {most.Count} kinds of enemy modelled ({copies} copies ready, {overlayMeshes} see-through for the other attempts), {hidden.Count} of the level's enemy renderers hidden, {(Time.realtimeSinceStartup - started) * 1000f:0} ms");
+            Plugin.Log.LogInfo("replay " + doorLine);
         }
 
         public void Dispose()
@@ -168,11 +141,7 @@ namespace UltraAttempts.Replay
                 bodies = Array.Empty<Body>();
                 shown = null;
             }, "putting away the enemies");
-            Safely(() =>
-            {
-                PutDoorsBack();
-                doorsOf = null;
-            }, "putting the doors back");
+            Safely(doors.Dispose, "putting the doors back");
             Safely(() => SetLevelHidden(false), "showing the level's enemies again");
             if (statesAsked > 0)
             {
@@ -246,7 +215,7 @@ namespace UltraAttempts.Replay
                 shownWorld = w;
                 bodies = w != null && w.Enemies.Length > 0 ? new Body[w.Enemies.Length] : Array.Empty<Body>();
             }
-            ShowDoors(g, t);
+            doors.Show(g, t);
             if (g == null || w == null)
             {
                 return;
@@ -810,167 +779,6 @@ namespace UltraAttempts.Replay
 
         private static string TypeName(int type) =>
             Enum.IsDefined(typeof(EnemyType), type) ? ((EnemyType)type).ToString() : "enemy type " + type;
-
-        // ---------------------------------------------------------------- doors
-
-        // The doors as g had them t seconds in: each one's last change by then (sample 0 says how they all
-        // started), sliding at the door's own speed after a change. Only plain sliding doors move.
-        private void ShowDoors(Ghost g, float t)
-        {
-            if (g != doorsOf)
-            {
-                PutDoorsBack();
-                doorsOf = g;
-                int n = g != null ? g.DoorPaths.Length : 0;
-                shownDoors = new DoorSpot[n];
-                doorKnown = new bool[n];
-                doorOpen = new bool[n];
-                doorSince = new float[n];
-                for (int i = 0; i < n; i++)
-                {
-                    shownDoors[i] = Spot(g.DoorPaths[i]);
-                }
-            }
-            if (g == null || g.Doors.Length == 0)
-            {
-                return;
-            }
-            float at = Mathf.Min(t, g.Duration);
-            int sample = Mathf.FloorToInt(at * g.Rate);
-            Array.Clear(doorKnown, 0, doorKnown.Length);
-            foreach (Ghost.DoorChange c in g.Doors)
-            {
-                if (c.Sample > sample)
-                {
-                    break;
-                }
-                if (c.Door >= doorKnown.Length || (doorKnown[c.Door] && doorOpen[c.Door] == c.Open))
-                {
-                    continue;
-                }
-                // (how it started: already in place; a change: it slides from then on)
-                doorSince[c.Door] = c.Sample == 0 ? float.NegativeInfinity : c.Sample / (float)g.Rate;
-                doorOpen[c.Door] = c.Open;
-                doorKnown[c.Door] = true;
-            }
-            bool changed = false;
-            for (int i = 0; i < shownDoors.Length; i++)
-            {
-                DoorSpot spot = shownDoors[i];
-                if (spot == null)
-                {
-                    continue;
-                }
-                if (doorKnown[i])
-                {
-                    changed |= Slide(spot, doorOpen[i], at - doorSince[i]);
-                }
-                else if (spot.Moved)
-                {
-                    changed |= PutBack(spot);  // (seeked back to before the attempt knew it)
-                }
-            }
-            if (changed)
-            {
-                Physics.SyncTransforms();  // (so shots and the camera hit the doors where they're shown)
-            }
-        }
-
-        // Returns whether it moved.
-        private bool Slide(DoorSpot spot, bool open, float since)
-        {
-            Door door = spot.Door;
-            if (door == null || spot.T == null)
-            {
-                return false;
-            }
-            Vector3 to = open ? door.openPosRelative : door.closedPos;
-            Vector3 from = open ? door.closedPos : door.openPosRelative;
-            Vector3 at = to;
-            float distance = Vector3.Distance(from, to);
-            if (!float.IsInfinity(since) && door.speed > 0f && distance > 0.001f)
-            {
-                float k = Mathf.Clamp01(since * door.speed / distance);
-                at = Vector3.LerpUnclamped(from, to, door.easeIn ? 1f - (1f - k) * (1f - k) : k);
-            }
-            if (!spot.Moved)
-            {
-                spot.Home = spot.T.localPosition;
-                spot.HomeInPos = door.inPos;
-                spot.Moved = true;
-                moved.Add(spot);
-            }
-            door.inPos = true;  // (its own Update only moves it while it isn't in place: this keeps it out of the way)
-            if (spot.T.localPosition == at)
-            {
-                return false;
-            }
-            spot.T.localPosition = at;
-            return true;
-        }
-
-        private static bool PutBack(DoorSpot spot)
-        {
-            spot.Moved = false;
-            if (spot.Door != null)
-            {
-                spot.Door.inPos = spot.HomeInPos;
-            }
-            if (spot.T == null)
-            {
-                return false;
-            }
-            spot.T.localPosition = spot.Home;
-            return true;
-        }
-
-        private void PutDoorsBack()
-        {
-            bool any = false;
-            for (int i = moved.Count - 1; i >= 0; i--)
-            {
-                if (moved[i].Moved)
-                {
-                    any |= PutBack(moved[i]);
-                }
-            }
-            moved.Clear();
-            if (any)
-            {
-                Physics.SyncTransforms();
-            }
-        }
-
-        // A door by its path (looked up once): only a plain sliding door that knows its open and shut places.
-        private DoorSpot Spot(string path)
-        {
-            if (string.IsNullOrEmpty(path))
-            {
-                return null;
-            }
-            if (spots.TryGetValue(path, out DoorSpot spot))
-            {
-                return spot;
-            }
-            Door door = null;
-            try
-            {
-                Transform t = Game.FindByPath(path);
-                door = t != null ? t.GetComponent<Door>() : null;
-            }
-            catch (Exception e)
-            {
-                Plugin.Log.LogWarning($"finding the door {path}: {e.Message}");
-            }
-            spot = null;
-            if (door != null && door.doorType == DoorType.Normal && door.gotPos && !spotOf.TryGetValue(door, out spot))
-            {
-                spot = new DoorSpot { Door = door, T = door.transform };
-                spotOf[door] = spot;
-            }
-            spots[path] = spot;
-            return spot;
-        }
 
         // ---------------------------------------------------------------- drawing
 

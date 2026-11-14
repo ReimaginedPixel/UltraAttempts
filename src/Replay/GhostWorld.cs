@@ -273,6 +273,8 @@ namespace UltraAttempts.Replay
         public int Look;
         public int Path;
         public Quaternion Rot;
+        public float StartScale;    // an explosion's scale when it went off, and how much it grows a second (0: not recorded)
+        public float Growth;
 
         public static WorldMoment Of(WorldEvent e, int rate, int looks, int paths)
         {
@@ -291,6 +293,8 @@ namespace UltraAttempts.Replay
                 Look = e.Look >= 0 && e.Look < looks ? e.Look : -1,
                 Path = e.Path >= 0 && e.Path < paths ? e.Path : -1,
                 Rot = len > 1f ? new Quaternion(x / len, y / len, z / len, w / len) : new Quaternion(0f, 0f, 0f, 1f),
+                StartScale = e.Kind == WorldEventKind.Explosion ? ExplosionGrowth.StartScale(e) : 0f,
+                Growth = e.Kind == WorldEventKind.Explosion ? ExplosionGrowth.PerSecond(e) : 0f,
             };
         }
     }

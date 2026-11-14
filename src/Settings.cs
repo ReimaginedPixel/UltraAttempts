@@ -102,6 +102,10 @@ namespace UltraAttempts
         public static ConfigEntry<Key> WatchKey;
         public static ConfigEntry<Key> ExitKey;
 
+        // Explosions as the game draws them, and deaths.
+        public static ConfigEntry<float> ExplosionOpacity;
+        public static ConfigEntry<bool> DeathAnimations;
+
         public static void Bind(ConfigFile config)
         {
             Record = config.Bind("Recording", "Enabled", true,
@@ -175,6 +179,12 @@ namespace UltraAttempts
 
             WatchKey = config.Bind("Keys", "Watch", Key.F8, "On the results screen: watch every attempt.");
             ExitKey = config.Bind("Keys", "Exit", Key.Backspace, "Leave a replay (Escape works too).");
+
+            // Explosions as the game draws them, and deaths.
+            ExplosionOpacity = config.Bind("Replay", "ExplosionOpacity", 0.5f,
+                new ConfigDescription("How solid the followed attempt's explosions are: the game's own explosion (white for a moment, then its colour, growing and fading as it does), see-through so it doesn't hide the fight. 1: as solid as in the game.", new AcceptableValueRange<float>(0.05f, 1f)));
+            DeathAnimations = config.Bind("Replay", "DeathAnimations", true,
+                "When an attempt dies its head pops off and flies (bouncing off the level), its body falls over and fades, and blood bursts out (only drawn: nothing is left in the level). Through its eyes, the camera backs out of its head to watch. Off: it just pops.");
         }
     }
 }

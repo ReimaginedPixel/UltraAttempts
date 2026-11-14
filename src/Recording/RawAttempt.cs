@@ -46,8 +46,22 @@ namespace UltraAttempts.Recording
         // A new checkpoint reached.
         Checkpoint = 3,
         // A door opened (B = 1) or closed (B = 0). A: index into DoorPaths. At sample 0 there is one
-        // for every door in the level, with its state when the attempt started.
+        // for every door in the level, with its state when the attempt started. C: DoorDetail (0 in
+        // older recordings).
         Door = 4,
+    }
+
+    // What else a door event says (its C; older recordings have 0: nothing known).
+    [Flags]
+    public enum DoorDetail
+    {
+        None = 0,
+        // The rest is known (every newer recording's door events have it).
+        Recorded = 1,
+        // The door was found like this (the attempt's start, or its room just came in), not opened or closed then.
+        AsFound = 2,
+        // A big door (one that swings) swings the other way: the side V1 opened it from.
+        Reversed = 4,
     }
 
     // One enemy an attempt met: where it was, how it was turned, which animation it was in, from when it
@@ -240,7 +254,9 @@ namespace UltraAttempts.Recording
 
     public enum WorldEventKind : byte
     {
-        // At X, Y, Z: Size its radius at the end (mm), Life how long it took to get there (ms), Color its own.
+        // At X, Y, Z: Size its radius at the end (mm), Life how long it took to get there (ms), Color its own
+        // (alpha included: it fades at 2 a second after). Newer recordings also have Look (its mesh in its
+        // own material, not the white it starts in), Rot, and how it grows in To (see ExplosionGrowth).
         Explosion = 1,
         // From X, Y, Z to ToX, ToY, ToZ: Size its width (mm), Life how long it fades (ms), Color its own.
         Beam = 2,
@@ -261,6 +277,27 @@ namespace UltraAttempts.Recording
         public int Look;              // -1: none
         public int Path;              // -1: none
         public short RotX, RotY, RotZ, RotW;
+    }
+
+    // How an explosion grows (0 and 0 in older recordings), kept in its event's To, which explosions didn't
+    // use: ToX - X its scale when it went off, ToY - Y how much its scale grows a second until it starts to
+    // fade (a quarter of that after), both in thousandths. ULTRAKILL adds 0.05 * speed to its scale every
+    // physics step.
+    public static class ExplosionGrowth
+    {
+        public static void Put(ref WorldEvent e, float startScale, float perSecond)
+        {
+            e.ToX = e.X + Thousandths(startScale);
+            e.ToY = e.Y + Thousandths(perSecond);
+            e.ToZ = e.Z;
+        }
+
+        public static float StartScale(in WorldEvent e) => (e.ToX - e.X) / 1000f;
+
+        public static float PerSecond(in WorldEvent e) => (e.ToY - e.Y) / 1000f;
+
+        private static int Thousandths(float v) =>
+            float.IsNaN(v) ? 0 : (int)Math.Round(Math.Max(0.0, Math.Min(1_000_000.0, v * 1000.0)));
     }
 
     // One attempt as recorded: fixed-rate samples, already quantized (centimetres, rotation * 32767),

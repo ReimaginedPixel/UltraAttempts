@@ -94,6 +94,31 @@ internal static class Program
             }
         }
         Console.WriteLine(failed == 0 && ok == Expected ? $"all {Expected} hooks found and accepted" : $"{failed} failed, {ok} ok (expected {Expected})");
-        return failed == 0 && ok == Expected ? 0 : 1;
+        int fields = PrivateFields();
+        return failed == 0 && ok == Expected && fields == 0 ? 0 : 1;
+    }
+
+    // The game's private fields UltraAttempts reads by name (AccessTools.FieldRefAccess): each must be there,
+    // of the type it's read as.
+    private static readonly (string type, string field, string fieldType)[] Fields =
+    {
+        ("Explosion", "originalMaterial", "Material"),
+        ("Explosion", "materialColor", "Color"),
+    };
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int PrivateFields()
+    {
+        int failed = 0;
+        foreach (var (type, field, fieldType) in Fields)
+        {
+            Type t = Type.GetType(type + ", Assembly-CSharp");
+            FieldInfo f = t != null ? AccessTools.Field(t, field) : null;
+            bool ok = f != null && f.FieldType.Name == fieldType;
+            Console.WriteLine(ok ? $"  ok    {type}.{field} ({fieldType}, read by name)" : $"  FAIL  {type}.{field}: {(t == null ? "no such type" : f == null ? "no such field" : "it's a " + f.FieldType.Name)}");
+            failed += ok ? 0 : 1;
+        }
+        Console.WriteLine(failed == 0 ? $"all {Fields.Length} fields read by name are there" : $"{failed} of {Fields.Length} fields read by name are missing");
+        return failed;
     }
 }
