@@ -59,6 +59,9 @@ namespace UltraAttempts.Replay
         public int WorldUsed;
         private float[] kills = Array.Empty<float>();             // when each enemy it met died, in order
 
+        // The game's own sounds as it heard them (Recording.RecordSounds; kept, unlike its world).
+        public GhostSounds Sounds;
+
         private static readonly Dictionary<int, int> NoEnemies = new Dictionary<int, int>();
 
         public struct WeaponChange
@@ -210,6 +213,7 @@ namespace UltraAttempts.Replay
             g.WeaponNames = raw.WeaponNames.ToArray();
             g.Doors = InOrder(doors);
             g.DoorPaths = raw.DoorPaths != null ? raw.DoorPaths.ToArray() : Array.Empty<string>();
+            g.Sounds = GhostSounds.FromRaw(raw, g.Rate);
             if (raw.SourcePath != null)
             {
                 g.Source = new WorldSource { Path = raw.SourcePath, Offset = raw.SourceOffset, Length = raw.SourceLength };

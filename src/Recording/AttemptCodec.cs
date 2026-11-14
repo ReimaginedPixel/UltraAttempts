@@ -13,11 +13,14 @@ namespace UltraAttempts.Recording
     //
     // Version 2 adds the world after the events: the door paths, then the enemies, packed the same way
     // (one column per channel, across every enemy). Version 3 adds everything else after that (WorldDetail =
-    // Everything): the things that moved, what they looked like, and the explosions, beams and breaks. Versions 1
-    // (UltraAttempts 1.0, no world) and 2 (no things) still read.
+    // Everything): the things that moved, what they looked like, and the explosions, beams and breaks. Version 4
+    // adds the game's own sounds (Recording.RecordSounds) right after the events, before the world: they're kept
+    // with the attempt (a replay plays every attempt's), not with its world (which a replay lets go of and reads
+    // again), so they read even without the world. Versions 1 (UltraAttempts 1.0, no world), 2 (no things) and 3
+    // (no sounds) still read.
     public static class AttemptCodec
     {
-        public const byte Version = 3;
+        public const byte Version = 4;
 
         public static byte[] Encode(RawAttempt a)
         {
@@ -30,7 +33,7 @@ namespace UltraAttempts.Recording
             {
                 enemySamples += t.Count;
             }
-            var w = new VarWriter(64 + a.Count * 12 + enemySamples * 12 + a.WorldEvents.Count * 24);
+            var w = new VarWriter(64 + a.Count * 12 + enemySamples * 12 + a.WorldEvents.Count * 24 + a.Sounds.Count * 20);
             w.Byte(Version);
             w.UInt((uint)a.Number);
             w.Byte((byte)a.Start);
@@ -74,6 +77,7 @@ namespace UltraAttempts.Recording
                 w.Int(e.C);
             }
 
+            EncodeSounds(w, a);
             EncodeWorld(w, a);
             EncodeThings(w, a);
 
@@ -157,6 +161,10 @@ namespace UltraAttempts.Recording
                 });
             }
 
+            if (version >= 4)
+            {
+                DecodeSounds(r, a);
+            }
             if (version >= 2 && world)
             {
                 DecodeWorld(r, a);
@@ -166,6 +174,178 @@ namespace UltraAttempts.Recording
                 }
             }
             return a;
+        }
+
+        // Version 4: whether sounds were recorded, the clips (each name and length once), then each channel for every
+        // sound in turn (when it started as a step from the sound before, where as a step from the sound before's
+        // place), then the moves the same way.
+        private static void EncodeSounds(VarWriter w, RawAttempt a)
+        {
+            w.Byte((byte)(a.SoundsRecorded ? 1 : 0));
+            w.UInt((uint)a.SoundClips.Count);
+            foreach (SoundClip clip in a.SoundClips)
+            {
+                w.String(clip.Name);
+                w.UInt((uint)Math.Max(0, clip.LengthMs));
+            }
+
+            List<SoundEvent> sounds = a.Sounds;
+            int n = sounds.Count;
+            w.UInt((uint)n);
+            int last = 0;
+            for (int i = 0; i < n; i++)
+            {
+                w.Int(unchecked(sounds[i].Sample - last));
+                last = sounds[i].Sample;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.UInt((uint)sounds[i].Clip);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Byte((byte)sounds[i].Flags);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Int(sounds[i].Volume);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Int(sounds[i].Pitch);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Byte(sounds[i].Spatial);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Byte(sounds[i].Rolloff);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Int(sounds[i].MinDistance);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Int(sounds[i].MaxDistance);
+            }
+            int x = 0, y = 0, z = 0;
+            for (int i = 0; i < n; i++)
+            {
+                SoundEvent s = sounds[i];
+                w.Int(unchecked(s.X - x));
+                w.Int(unchecked(s.Y - y));
+                w.Int(unchecked(s.Z - z));
+                x = s.X;
+                y = s.Y;
+                z = s.Z;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                w.Int(sounds[i].Length);
+            }
+
+            List<SoundMove> moves = a.SoundMoves;
+            w.UInt((uint)moves.Count);
+            var before = new SoundMove();
+            foreach (SoundMove m in moves)
+            {
+                w.Int(unchecked(m.Sound - before.Sound));
+                w.Int(unchecked(m.Sample - before.Sample));
+                w.Int(unchecked(m.X - before.X));
+                w.Int(unchecked(m.Y - before.Y));
+                w.Int(unchecked(m.Z - before.Z));
+                before = m;
+            }
+        }
+
+        private static void DecodeSounds(VarReader r, RawAttempt a)
+        {
+            a.SoundsRecorded = (r.Byte() & 1) != 0;
+            int clips = r.Count(2);  // (a name and a length: at least 2 bytes)
+            for (int i = 0; i < clips; i++)
+            {
+                a.SoundClips.Add(new SoundClip { Name = r.String(), LengthMs = (int)Math.Min(int.MaxValue, r.UInt()) });
+            }
+
+            int n = r.Count(13);  // (thirteen channels: at least 13 bytes a sound)
+            var sounds = new SoundEvent[n];
+            int last = 0;
+            for (int i = 0; i < n; i++)
+            {
+                last = unchecked(last + r.Int());
+                sounds[i].Sample = last;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                uint clip = r.UInt();
+                if (clip >= (uint)clips)
+                {
+                    throw new InvalidDataException("bad sound");
+                }
+                sounds[i].Clip = (int)clip;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].Flags = (SoundFlags)r.Byte();
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].Volume = r.Int();
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].Pitch = r.Int();
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].Spatial = r.Byte();
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].Rolloff = r.Byte();
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].MinDistance = r.Int();
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].MaxDistance = r.Int();
+            }
+            int x = 0, y = 0, z = 0;
+            for (int i = 0; i < n; i++)
+            {
+                x = unchecked(x + r.Int());
+                y = unchecked(y + r.Int());
+                z = unchecked(z + r.Int());
+                sounds[i].X = x;
+                sounds[i].Y = y;
+                sounds[i].Z = z;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                sounds[i].Length = r.Int();
+            }
+            a.Sounds = new List<SoundEvent>(sounds);
+
+            int moves = r.Count(5);
+            a.SoundMoves = new List<SoundMove>(moves);
+            var m = new SoundMove();
+            for (int i = 0; i < moves; i++)
+            {
+                m.Sound = unchecked(m.Sound + r.Int());
+                m.Sample = unchecked(m.Sample + r.Int());
+                m.X = unchecked(m.X + r.Int());
+                m.Y = unchecked(m.Y + r.Int());
+                m.Z = unchecked(m.Z + r.Int());
+                if (m.Sound < 0 || m.Sound >= n)
+                {
+                    throw new InvalidDataException("bad sound move");
+                }
+                a.SoundMoves.Add(m);
+            }
         }
 
         // Version 2: the enemy stride, the door paths, then the enemies: a name table, each enemy's

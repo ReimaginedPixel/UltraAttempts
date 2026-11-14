@@ -29,6 +29,7 @@ namespace UltraAttempts.Recording
 
         private readonly SessionStore store;
         private readonly WorldRecorder world = new WorldRecorder();
+        private readonly SoundRecorder sounds = new SoundRecorder();
 
         private StatsManager sceneStats;
         private string sceneName;
@@ -226,6 +227,27 @@ namespace UltraAttempts.Recording
             }
         }
 
+        // The game's own sounds (Recording.RecordSounds): one starting (delay: PlayDelayed's), or one that plays by
+        // itself being picked up by the game's virtual audio.
+        public void OnSound(AudioSource source, AudioClip clip, float volumeScale, float delay, SoundPath path, bool replaying)
+        {
+            if (current != null && !replaying)
+            {
+                sounds.OnStart(source, clip, volumeScale, delay, path, SampleNow);
+            }
+        }
+
+        public void OnAwakeSound(AudioSource source, bool replaying)
+        {
+            if (current != null && !replaying)
+            {
+                sounds.OnAwake(source, SampleNow);
+            }
+        }
+
+        // The attempt sample it is right now, between this frame's samples (the game clock since the last step).
+        private int SampleNow => Math.Max(0, (int)Math.Round((time + Math.Max(0.0, Time.timeAsDouble - clock)) / interval));
+
         // ULTRAKILL is about to load a scene: restarting this level (no checkpoint), or leaving it.
         public void OnLeavingScene(string target)
         {
@@ -279,10 +301,12 @@ namespace UltraAttempts.Recording
                 RawAttempt attempt = current;
                 current = null;
                 world.End();
+                sounds.End(attempt.Count - 1);
                 attempt.End = finishing ? AttemptEnd.Finish : AttemptEnd.Quit;
                 Submit(attempt, attempt.End);
             }
             world.EnterScene();
+            sounds.EnterScene();
             sceneStats = sm;
             sceneHadAttempt = false;
             finishing = false;
@@ -329,6 +353,7 @@ namespace UltraAttempts.Recording
             cameraSteps = 0;
             ownSteps = 0;
             world.Begin(current, Settings.World.Value);
+            sounds.Begin(current, Settings.RecordSounds.Value);
             last = Capture(nm);
             Emit(nm, last, current, 1f);
             nextTick = interval;
@@ -350,6 +375,7 @@ namespace UltraAttempts.Recording
                 Emit(nm, Capture(nm), attempt, 1f);
             }
             world.End();
+            sounds.End(attempt.Count - 1);
             attempt.End = reason;
             Report(attempt, nm);
             Submit(attempt, reason);
@@ -388,6 +414,7 @@ namespace UltraAttempts.Recording
             {
                 t.End = Math.Min(t.End, lastSample);
             }
+            SoundRecorder.Trim(attempt, lastSample);
             store.SubmitAttempt(level, attempt, reason == AttemptEnd.Finish);
         }
 
@@ -416,6 +443,7 @@ namespace UltraAttempts.Recording
             {
                 Plugin.Log.LogInfo("...and everything else (WorldDetail = Everything): " + Everything(a));
             }
+            Plugin.Log.LogInfo("...and its sounds (RecordSounds): " + sounds.Summary(a));
         }
 
         // What an attempt recorded besides V1 and its enemies, for the log.
@@ -462,6 +490,7 @@ namespace UltraAttempts.Recording
             }
             world.Frame();
             Advance(nm, dt);
+            sounds.Poll(current.Count - 1);
             return true;
         }
 

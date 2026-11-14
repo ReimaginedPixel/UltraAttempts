@@ -110,5 +110,39 @@ namespace UltraAttempts
             }
             return !director.TryLevelEnd(__instance, thenNextLevel: true);
         }
+
+        // ---------------------------------------------------------------- the game's own sounds
+        // (Recording.RecordSounds). Nearly all of ULTRAKILL's sounds go through its Play / PlayOneShot / PlayDelayed
+        // extensions (tracked or not), which hand the source to its virtual audio; sounds that play by themselves when
+        // they're spawned (explosions, Gabriel's swings and teleports) reach that virtual audio as their objects come
+        // on. Each is read before it starts (its clip, volume and pitch are set by then), and never throws into the game.
+
+        [HarmonyPatch(typeof(AudioSourceExtensions), nameof(AudioSourceExtensions.Play), typeof(AudioSource), typeof(bool)), HarmonyPrefix]
+        private static void SoundPlay(AudioSource @this) => Recorder.Instance?.OnSound(@this, @this != null ? @this.clip : null, 1f, 0f, SoundPath.Play, Replaying);
+
+        // (the two-argument PlayOneShot calls this one)
+        [HarmonyPatch(typeof(AudioSourceExtensions), nameof(AudioSourceExtensions.PlayOneShot), typeof(AudioSource), typeof(AudioClip), typeof(float), typeof(bool)), HarmonyPrefix]
+        private static void SoundOneShot(AudioSource @this, AudioClip clip, float volumeScale) => Recorder.Instance?.OnSound(@this, clip, volumeScale, 0f, SoundPath.OneShot, Replaying);
+
+        [HarmonyPatch(typeof(AudioSourceExtensions), nameof(AudioSourceExtensions.PlayDelayed), typeof(AudioSource), typeof(float), typeof(bool)), HarmonyPrefix]
+        private static void SoundDelayed(AudioSource @this, float delay) => Recorder.Instance?.OnSound(@this, @this != null ? @this.clip : null, 1f, delay, SoundPath.Delayed, Replaying);
+
+        // Every way into the game's virtual audio ends here: a sound that plays by itself (playOnAwake) is picked up as
+        // it's spawned or switched on, or once it's playing.
+        [HarmonyPatch(typeof(VirtualAudioManager), "AddAudioSource", typeof(VirtualAudioFilter)), HarmonyPrefix]
+        private static void SoundTracked(VirtualAudioFilter filter)
+        {
+            try
+            {
+                if (filter != null && Recorder.Instance != null)
+                {
+                    Recorder.Instance.OnAwakeSound(filter.source, Replaying);
+                }
+            }
+            catch (System.Exception)
+            {
+                // (the recorder logs its own failures; this only guards the filter's own lookups)
+            }
+        }
     }
 }
