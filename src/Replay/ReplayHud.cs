@@ -148,6 +148,11 @@ namespace UltraAttempts.Replay
                 Followed(d, w);
                 Timeline(d, w);
                 Help(d);
+                float noticed = Time.unscaledTime - d.NoticeAt;
+                if (noticed >= 0f && noticed < 1.6f)
+                {
+                    Text(new Rect(0f, Ref * 0.12f, w, 30f), d.Notice, 22, new Color(1f, 1f, 1f, Mathf.Clamp01((1.6f - noticed) / 0.4f)), TextAnchor.MiddleCenter);
+                }
                 if (d.Summary)
                 {
                     SummaryCard(d, w);
@@ -162,7 +167,7 @@ namespace UltraAttempts.Replay
         private void Stats(ReplayDirector d)
         {
             int count = d.Ghosts.Count;
-            Box(new Rect(20f, 20f, 400f, 196f), Panel);
+            Box(new Rect(20f, 20f, 400f, d.OverlaysShown > 0 ? 224f : 196f), Panel);
             Text(new Rect(36f, 30f, 380f, 40f), "ATTEMPT REPLAY", 32, Accent, bold: true);
             Text(new Rect(36f, 72f, 380f, 24f), d.LevelName.ToUpperInvariant(), 18, Color.white);
             string days = d.RunDays > 1 ? $"  |  {d.RunDays} DAYS" : "";
@@ -170,6 +175,11 @@ namespace UltraAttempts.Replay
             Row(132f, "ALIVE", d.Alive.ToString(), Color.white);
             Row(156f, "DEATHS", d.DeadSoFar.ToString(), new Color(1f, 0.45f, 0.4f));
             Row(180f, "FINISHED", d.FinishedSoFar.ToString(), GhostRenderer.Gold);
+            if (d.OverlaysShown > 0)
+            {
+                // (the other attempts' worlds layered in, see-through)
+                Text(new Rect(36f, 220f, 380f, 20f), $"+ {d.OverlaysShown} OTHER ATTEMPT{(d.OverlaysShown == 1 ? "'S" : "S'")} WORLD{(d.OverlaysShown == 1 ? "" : "S")}  (O)", 13, Dim);
+            }
         }
 
         private static void Row(float y, string label, string value, Color color)
@@ -331,17 +341,22 @@ namespace UltraAttempts.Replay
             Text(new Rect(x + width - 400f, y + 12f, 400f, 22f), $"x{d.Speed:0.##}  {state}", 16, Color.white, TextAnchor.UpperRight);
         }
 
+        private static readonly string[] HelpLines = new string[4];
+        private static Key helpExitKey = (Key)(-1);
+
         private static void Help(ReplayDirector d)
         {
-            string[] lines =
+            // (made again only when the exit key changes, not every frame)
+            if (helpExitKey != Settings.ExitKey.Value)
             {
-                "TAB / 1-4  CAMERA        V  EYES / BEHIND",
-                d.Mode == ReplayCamera.FreeCam ? "WASD Q/E  FLY  (SHIFT FAST)" : "Q / E  PICK AN ATTEMPT      MOUSE  LOOK AROUND",
-                "<- ->  SEEK   UP/DOWN  SPEED   SPACE  PAUSE   R  RESTART",
-                "M  MARKERS   H  HIDE HUD   ESC / " + Settings.ExitKey.Value.ToString().ToUpperInvariant() + "  LEAVE",
-            };
+                helpExitKey = Settings.ExitKey.Value;
+                HelpLines[0] = "TAB / 1-4  CAMERA        V  EYES / BEHIND";
+                HelpLines[2] = "<- ->  SEEK   UP/DOWN  SPEED   SPACE  PAUSE   R  RESTART";
+                HelpLines[3] = "M  MARKERS   O  OTHER ATTEMPTS' WORLDS   H  HIDE HUD   ESC / " + helpExitKey.ToString().ToUpperInvariant() + "  LEAVE";
+            }
+            HelpLines[1] = d.Mode == ReplayCamera.FreeCam ? "WASD Q/E  FLY  (SHIFT FAST)" : "Q / E  PICK AN ATTEMPT      MOUSE  LOOK AROUND";
             float y = Ref - 210f;
-            foreach (string line in lines)
+            foreach (string line in HelpLines)
             {
                 Text(new Rect(28f, y, 900f, 20f), line, 13, new Color(1f, 1f, 1f, 0.5f));
                 y += 19f;

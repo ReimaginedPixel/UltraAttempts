@@ -6,10 +6,11 @@ using System.IO.Compression;
 using System.Linq;
 using UltraAttempts.Recording;
 
-// Checks the recording format end to end: an attempt (with its enemies and doors) survives encoding
-// exactly, attempts recorded by 1.0 still read, damaged data is refused, runs continue and complete as
-// they should (a run begun with 1.0 carries on with new attempts), a crash's half-written block is
-// ignored and cut off, old runs are pruned, and how small a realistic attempt is.
+// Checks the recording format end to end: an attempt (with its enemies, doors, and everything else that
+// moved or happened: things, looks, explosions, beams, breaks) survives encoding exactly, attempts recorded
+// by 1.0 and 1.1 still read, damaged data is refused, runs continue and complete as they should (a run begun
+// with 1.0 carries on with new attempts), an attempt reads again from where it is in its file, a crash's
+// half-written block is ignored and cut off, old runs are pruned, and how small a realistic attempt is.
 internal static class Program
 {
     private static int failures;
@@ -100,7 +101,8 @@ internal static class Program
             string versionInfo = run.Attempts.Count > 0 ? $"{run.Attempts[0].SampleRate} Hz" : "-";
             Console.WriteLine($"  {Path.GetRelativePath(folder, file)}: {run.Attempts.Count} attempts{(run.Info.Complete ? ", won" : "")}, {seconds:0.0} s, {versionInfo}, " +
                 $"{new FileInfo(file).Length / Math.Max(seconds, 0.1):0} bytes/s, eye jitter {(samples > 0 ? jitter / samples : 0):0.0} cm/sample, {(samples > 0 ? 100.0 * shaky / samples : 0):0.0}% shaken (>10 cm)" +
-                $"{(run.Attempts.Any(a => a.Enemies.Count > 0) ? $", {run.Attempts.Sum(a => a.Enemies.Count)} enemy tracks" : "")}");
+                $"{(run.Attempts.Any(a => a.Enemies.Count > 0) ? $", {run.Attempts.Sum(a => a.Enemies.Count)} enemy tracks" : "")}" +
+                $"{(run.Attempts.Any(a => a.HasThings) ? $", {run.Attempts.Sum(a => a.Things.Count)} things, {run.Attempts.Sum(a => a.WorldEvents.Count)} explosions/beams/breaks" : "")}");
             foreach (string error in errors)
             {
                 Console.WriteLine("        " + error);
@@ -166,8 +168,101 @@ internal static class Program
         if (world)
         {
             ExtremeWorld(a, random);
+            ExtremeThings(a, random);
         }
         return a;
+    }
+
+    private static readonly string[] MeshNames = { "Sphere", "Cube", "Rocket", "Ünïcödé Nail", "", "Gib_Head", new string('M', 400) };
+
+    private static float AnyFloat(Random random)
+    {
+        switch (random.Next(8))
+        {
+            case 0: return float.NaN;
+            case 1: return float.PositiveInfinity;
+            case 2: return -0f;
+            case 3: return float.MaxValue;
+            case 4: return float.Epsilon;
+            default: return (float)((random.NextDouble() - 0.5) * 1000);
+        }
+    }
+
+    // Looks, things and events with anything in them (WorldDetail = Everything).
+    private static void ExtremeThings(RawAttempt a, Random random)
+    {
+        int looks = random.Next(0, 5);
+        for (int l = 0; l < looks; l++)
+        {
+            var look = new ThingLook
+            {
+                Name = EnemyNames[random.Next(EnemyNames.Length)],
+                Color = (uint)random.Next() ^ ((uint)random.Next(2) << 31),
+                CenterX = AnyFloat(random), CenterY = AnyFloat(random), CenterZ = AnyFloat(random),
+                SizeX = AnyFloat(random), SizeY = AnyFloat(random), SizeZ = AnyFloat(random),
+            };
+            for (int p = random.Next(0, 4); p > 0; p--)
+            {
+                look.Parts.Add(new LookPart
+                {
+                    Mesh = MeshNames[random.Next(MeshNames.Length)],
+                    Vertices = random.Next(0, int.MaxValue),
+                    Materials = Enumerable.Range(0, random.Next(0, 4)).Select(_ => MeshNames[random.Next(MeshNames.Length)] + " mat").ToArray(),
+                    PX = AnyFloat(random), PY = AnyFloat(random), PZ = AnyFloat(random),
+                    RX = AnyFloat(random), RY = AnyFloat(random), RZ = AnyFloat(random), RW = AnyFloat(random),
+                    SX = AnyFloat(random), SY = AnyFloat(random), SZ = AnyFloat(random),
+                });
+            }
+            a.Looks.Add(look);
+        }
+        for (int p = random.Next(0, 4); p > 0; p--)
+        {
+            a.AddThingPath($"Level#0/Room#{p}/Ünïcödé Platform#{random.Next(9)}");
+        }
+        int id = random.Next(0, 5);
+        for (int k = random.Next(0, 10); k > 0; k--)
+        {
+            var t = new ThingTrack
+            {
+                Id = id,
+                Kind = (ThingKind)random.Next(0, 5),
+                Look = random.Next(-1, a.Looks.Count),
+                Path = random.Next(-1, a.ThingPaths.Count),
+                ScaleX = AnyFloat(random), ScaleY = AnyFloat(random), ScaleZ = AnyFloat(random),
+                Gone = random.Next(2) == 0,
+            };
+            id += random.Next(1, 4);
+            int sample = random.Next(0, Math.Max(1, a.Count));
+            for (int i = random.Next(0, 30); i > 0; i--)
+            {
+                sample += random.Next(0, 3) == 0 ? random.Next(1, 200) : a.EnemyStride;
+                t.Add(sample,
+                    random.Next(-100_000_000, 100_000_001), random.Next(-100_000_000, 100_000_001), random.Next(-100_000_000, 100_000_001),
+                    (short)random.Next(short.MinValue, short.MaxValue + 1), (short)random.Next(short.MinValue, short.MaxValue + 1),
+                    (short)random.Next(short.MinValue, short.MaxValue + 1), (short)random.Next(0, short.MaxValue + 1),
+                    (ushort)random.Next(0, 65536));
+            }
+            t.End = sample + random.Next(0, 50);
+            a.Things.Add(t);
+        }
+        int at = 0;
+        for (int e = random.Next(0, 12); e > 0; e--)
+        {
+            at += random.Next(0, 40);
+            a.WorldEvents.Add(new WorldEvent
+            {
+                Sample = at,
+                Kind = (WorldEventKind)random.Next(1, 4),
+                X = random.Next(-100_000_000, 100_000_001), Y = random.Next(-100_000_000, 100_000_001), Z = random.Next(-100_000_000, 100_000_001),
+                ToX = random.Next(-100_000_000, 100_000_001), ToY = random.Next(-100_000_000, 100_000_001), ToZ = random.Next(-100_000_000, 100_000_001),
+                Size = random.Next(int.MinValue, int.MaxValue),
+                Life = random.Next(0, 100_000),
+                Color = (uint)random.Next() * 2u + (uint)random.Next(2),
+                Look = random.Next(-1, a.Looks.Count),
+                Path = random.Next(-1, a.ThingPaths.Count),
+                RotX = (short)random.Next(short.MinValue, short.MaxValue + 1), RotY = short.MinValue, RotZ = short.MaxValue, RotW = (short)random.Next(0, 3),
+            });
+        }
     }
 
     private static readonly string[] EnemyNames = { "Zombie", "Filth", "Stray", "Ünïcödé Mindflayer", "", "Drone", new string('W', 300) };
@@ -267,6 +362,74 @@ internal static class Program
                 return false;
             }
         }
+        if (a.Looks.Count != b.Looks.Count || !a.ThingPaths.SequenceEqual(b.ThingPaths) || a.Things.Count != b.Things.Count || a.WorldEvents.Count != b.WorldEvents.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.Looks.Count; i++)
+        {
+            if (!Same(a.Looks[i], b.Looks[i]))
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < a.Things.Count; i++)
+        {
+            if (!Same(a.Things[i], b.Things[i]))
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < a.WorldEvents.Count; i++)
+        {
+            WorldEvent e = a.WorldEvents[i], f = b.WorldEvents[i];
+            if (e.Sample != f.Sample || e.Kind != f.Kind || e.X != f.X || e.Y != f.Y || e.Z != f.Z || e.ToX != f.ToX || e.ToY != f.ToY || e.ToZ != f.ToZ
+                || e.Size != f.Size || e.Life != f.Life || e.Color != f.Color || e.Look != f.Look || e.Path != f.Path
+                || e.RotX != f.RotX || e.RotY != f.RotY || e.RotZ != f.RotZ || e.RotW != f.RotW)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool Bits(float a, float b) => BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b);
+
+    private static bool Same(ThingLook a, ThingLook b)
+    {
+        if (a.Name != b.Name || a.Color != b.Color || !Bits(a.CenterX, b.CenterX) || !Bits(a.CenterY, b.CenterY) || !Bits(a.CenterZ, b.CenterZ)
+            || !Bits(a.SizeX, b.SizeX) || !Bits(a.SizeY, b.SizeY) || !Bits(a.SizeZ, b.SizeZ) || a.Parts.Count != b.Parts.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.Parts.Count; i++)
+        {
+            LookPart p = a.Parts[i], q = b.Parts[i];
+            if (p.Mesh != q.Mesh || p.Vertices != q.Vertices || !p.Materials.SequenceEqual(q.Materials)
+                || !Bits(p.PX, q.PX) || !Bits(p.PY, q.PY) || !Bits(p.PZ, q.PZ) || !Bits(p.RX, q.RX) || !Bits(p.RY, q.RY) || !Bits(p.RZ, q.RZ) || !Bits(p.RW, q.RW)
+                || !Bits(p.SX, q.SX) || !Bits(p.SY, q.SY) || !Bits(p.SZ, q.SZ))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool Same(ThingTrack a, ThingTrack b)
+    {
+        if (a.Id != b.Id || a.Kind != b.Kind || a.Look != b.Look || a.Path != b.Path || !Bits(a.ScaleX, b.ScaleX) || !Bits(a.ScaleY, b.ScaleY) || !Bits(a.ScaleZ, b.ScaleZ)
+            || a.End != b.End || a.Gone != b.Gone || a.Count != b.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.Count; i++)
+        {
+            if (a.Sample[i] != b.Sample[i] || a.PosX[i] != b.PosX[i] || a.PosY[i] != b.PosY[i] || a.PosZ[i] != b.PosZ[i]
+                || a.RotX[i] != b.RotX[i] || a.RotY[i] != b.RotY[i] || a.RotZ[i] != b.RotZ[i] || a.RotW[i] != b.RotW[i] || a.Scale[i] != b.Scale[i])
+            {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -303,7 +466,7 @@ internal static class Program
             RawAttempt a = Sample(42, n, n, world: false);
             Check(Same(a, RoundTrip(a)), $"{n} samples come back exactly");
         }
-        int enemies = 0, doors = 0, enemySamples = 0;
+        int enemies = 0, doors = 0, enemySamples = 0, things = 0, keys = 0, looks = 0, happenings = 0;
         bool exact = true;
         for (int seed = 0; seed < 200; seed++)
         {
@@ -312,23 +475,36 @@ internal static class Program
             enemies += a.Enemies.Count;
             doors += a.DoorPaths.Count;
             enemySamples += a.Enemies.Sum(e => e.Count);
+            things += a.Things.Count;
+            keys += a.Things.Sum(t => t.Count);
+            looks += a.Looks.Count;
+            happenings += a.WorldEvents.Count;
         }
-        Check(exact, $"200 attempts with their worlds come back exactly ({enemies} enemies, {enemySamples} enemy samples, {doors} doors)");
+        Check(exact, $"200 attempts with their worlds come back exactly ({enemies} enemies, {enemySamples} enemy samples, {doors} doors, "
+            + $"{things} things, {keys} thing keys, {looks} looks, {happenings} explosions, beams and breaks; NaNs and extremes included)");
 
         RawAttempt crowd = Smooth(60 * 60, 5, 60);
         Crowd(crowd, 12, 5);
-        Check(Same(crowd, RoundTrip(crowd)), "a minute with 12 enemies about comes back exactly");
+        Battle(crowd, 5);
+        Check(Same(crowd, RoundTrip(crowd)), "a minute with 12 enemies about and a battle's worth of things comes back exactly");
         RawAttempt bare = RoundTrip(crowd, world: false);
-        Check(bare.Count == crowd.Count && bare.Enemies.Count == 0 && bare.DoorPaths.Count == 0 && bare.PosX[100] == crowd.PosX[100],
-            "decoding without the world leaves out the enemies and doors (and nothing else)");
+        Check(bare.Count == crowd.Count && bare.Enemies.Count == 0 && bare.DoorPaths.Count == 0 && bare.Things.Count == 0 && bare.Looks.Count == 0
+            && bare.WorldEvents.Count == 0 && bare.PosX[100] == crowd.PosX[100],
+            "decoding without the world leaves out the enemies, doors and things (and nothing else)");
 
         RawAttempt live = Sample(3, 50, 9);
         live.Enemies.Add(new EnemyTrack { Id = 99, Name = "Filth" });
         live.Enemies[^1].Add(1, 2, 3, 0, 0, 0, 32767, 5, 6, 255);
+        live.Things.Add(new ThingTrack { Id = 5 });
+        live.Things[^1].Add(4, 1, 2, 3, 0, 0, 0, 32767, 1000);
+        live.SourcePath = "somewhere";
         RawAttempt clone = live.Clone(AttemptEnd.InProgress);
         clone.Enemies[^1].PosX[0] = 77;
+        clone.Things[^1].PosX[0] = 77;
+        clone.Things.Add(new ThingTrack());
         Check(clone.End == AttemptEnd.InProgress && clone.PosX.Length == 50 && clone.PosX[10] == live.PosX[10], "an attempt in progress clones trimmed");
         Check(clone.Enemies.Count == live.Enemies.Count && live.Enemies[^1].PosX[0] == 1, "...with its own copy of the enemies");
+        Check(clone.Things.Count == live.Things.Count + 1 && live.Things[^1].PosX[0] == 1 && clone.SourcePath == null, "...and of the things (and no file of its own)");
 
         bool threw = false;
         try
@@ -380,16 +556,78 @@ internal static class Program
         return a;
     }
 
+    // An attempt recorded by 1.1 (enemies and doors): format 2, written by its own encoder (commit 0941ac7)
+    // from OldAttemptV2() below.
+    private const string Version2Attempt =
+        "Y+JhYGR4sEnvN9NdDhsGhgAHBoYVDixMgr6OQd7Bvo5+CkGuYf4+Ya5BQs7+Qa4Krl6uziEKwR7+Ie6hfhWJDEDNIKQIJB1gDBBygDFAIo5wNWBlSFIO" +
+        "CO1gZQgpsGkwKZAyuBTQ0hQoSIaCJChIhIIEKIiHgjgoiIWCGCiIhoIoKIiEgggoCIeCMCh4zq7DwiIqJwolgIBOnA+MfAwwMJNxFjAUBpBzgAcYFy" +
+        "MJnGBkZGQZCDRQHu6XARYFAwEu9DCKDYzNDFwMDOoa9McbnjCzDoyHWRkYmVgYGFgYmIAEEBuxMDExaDAC+UxM8j6pZak5ygb6hgq6Cm6ZRcUlCkH5" +
+        "+blAAZf8/CJlA1WYvBFQ3iMxJwcqUwyknTLTFcCqDJlY3TJzSjJYg0uKEiuZGdiAljbYMzBosAgAU/YBexEGeRYpkEscRBjFLvATmeQu8FcQkN9CUb65" +
+        "AQwTfGADJ1bh+fISxJlPSCHRBlETHADGP1UUEm0Q9UDDF2Z5KqnEpWDuzCNzeFCF0PyJ4BKhFo+SHeLUhBQZR4Lmf8ysxAFCCnHIAwA=";
+
+    private static RawAttempt OldAttemptV2()
+    {
+        var a = new RawAttempt
+        {
+            Number = 12,
+            Start = AttemptStart.LevelStart,
+            End = AttemptEnd.Death,
+            StartedUtcTicks = 638_670_000_000_000_000L,
+            SampleRate = 60,
+            LevelTimeStart = 3.25f,
+            LevelTimeEnd = 5.25f,
+            Cheats = false,
+            MajorAssists = false,
+            WeaponsRecorded = true,
+            EnemyStride = 2,
+        };
+        for (int i = 0; i < 120; i++)
+        {
+            a.Add(
+                -500 + i * 21 + (i * i) % 13, 120 + (i % 11) * 7, 800 - i * 17,
+                0, (short)(100 - (i % 3)), 0,
+                (short)(i * 30 - 1800), (short)(9000 + i * 11), (short)((i % 4) * 5), (short)(31000 - i * 3),
+                (byte)((i % 3 == 0 ? 1 : 0) | (i % 9 == 0 ? 32 : 0) | (i % 13 == 0 ? 64 : 0)), (byte)(100 - i / 8));
+        }
+        a.Events.Add(new AttemptEvent { Sample = 0, Kind = EventKind.Weapon, A = 1, B = 2, C = a.AddWeaponName("MARKSMAN REVOLVER") });
+        int d0 = a.AddDoorPath("Level#0/1 - First Room#0/Door#0");
+        int d1 = a.AddDoorPath("Level#0/2 - Hall#0/Doors#0/Big Door#1");
+        a.Events.Add(new AttemptEvent { Sample = 0, Kind = EventKind.Door, A = d0, B = 1 });
+        a.Events.Add(new AttemptEvent { Sample = 0, Kind = EventKind.Door, A = d1, B = 0 });
+        a.Events.Add(new AttemptEvent { Sample = 50, Kind = EventKind.Door, A = d1, B = 1 });
+        a.Events.Add(new AttemptEvent { Sample = 90, Kind = EventKind.Weapon, A = 2, B = 0, C = a.AddWeaponName("CORE EJECT SHOTGUN") });
+        for (int k = 0; k < 3; k++)
+        {
+            var e = new EnemyTrack { Id = k * 2, Type = 3 + k * 5, Name = k == 1 ? "Stray" : "Filth", Scale = 1f + k * 0.5f, Start = k * 10, Died = k == 2 };
+            for (int s = 0; s < 40 - k * 9; s++)
+            {
+                e.Add(1000 + s * 30 * (k + 1), k * 300, -2000 + s * 12, 0, (short)(s * 160), 0, (short)(32000 - s * 16), unchecked((int)0x9E3779B1) + (s / 15), (ushort)(s * 1500), (byte)(255 - s * 3));
+            }
+            a.Enemies.Add(e);
+        }
+        return a;
+    }
+
     private static void OldAttempts()
     {
-        Console.WriteLine("1.0 attempts");
+        Console.WriteLine("1.0 and 1.1 attempts");
         byte[] bytes = Convert.FromBase64String(Version1Attempt);
         Check(Inflate(bytes)[0] == 1, "the embedded attempt is format 1");
         RawAttempt a = AttemptCodec.Decode(bytes, 0, bytes.Length);
         Check(Same(OldAttempt(), a), "an attempt recorded by 1.0 reads back exactly");
-        Check(a.Enemies.Count == 0 && a.DoorPaths.Count == 0, "...with no enemies or doors");
+        Check(a.Enemies.Count == 0 && a.DoorPaths.Count == 0 && a.Things.Count == 0, "...with no enemies, doors or things");
         byte[] again = AttemptCodec.Encode(a);
         Check(Inflate(again)[0] == AttemptCodec.Version && Same(a, AttemptCodec.Decode(again, 0, again.Length)), $"saved again it's format {AttemptCodec.Version}, and the same");
+
+        bytes = Convert.FromBase64String(Version2Attempt);
+        Check(Inflate(bytes)[0] == 2, "the embedded 1.1 attempt is format 2");
+        RawAttempt b = AttemptCodec.Decode(bytes, 0, bytes.Length);
+        Check(Same(OldAttemptV2(), b) && b.Enemies.Count == 3 && b.DoorPaths.Count == 2, "an attempt recorded by 1.1 reads back exactly, enemies and doors included");
+        Check(b.Things.Count == 0 && b.Looks.Count == 0 && b.WorldEvents.Count == 0, "...with no things");
+        RawAttempt light = AttemptCodec.Decode(bytes, 0, bytes.Length, world: false);
+        Check(light.Count == 120 && light.Enemies.Count == 0 && light.Events.Count == b.Events.Count, "...and without its world when asked");
+        again = AttemptCodec.Encode(b);
+        Check(Inflate(again)[0] == AttemptCodec.Version && Same(b, AttemptCodec.Decode(again, 0, again.Length)), $"saved again it's format {AttemptCodec.Version}, and the same");
     }
 
     // Damaged attempts are refused (and quickly: a count too big for the data isn't allocated first).
@@ -446,9 +684,28 @@ internal static class Program
         var hugeTrack = new List<byte>(head);
         hugeTrack.AddRange(new byte[] { 1, 1, (byte)'x', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 });
         hugeTrack.AddRange(new byte[64]);
+        // Version 3 the same, with no enemies: then far too many names, looks, things, a thing's keys, events.
+        var head3 = new List<byte>(head);
+        head3[0] = 3;
+        head3.AddRange(new byte[] { 0, 0 });
+        var tooMany = new List<List<byte>> { hugeCount, hugeTrack };
+        foreach (byte[] tail in new[]
+        {
+            new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+            new byte[] { 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+            new byte[] { 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+            new byte[] { 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+            new byte[] { 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 },
+        })
+        {
+            var damaged = new List<byte>(head3);
+            damaged.AddRange(tail);
+            damaged.AddRange(new byte[64]);
+            tooMany.Add(damaged);
+        }
         bool both = true;
         var clock = Stopwatch.StartNew();
-        foreach (List<byte> damaged in new[] { hugeCount, hugeTrack })
+        foreach (List<byte> damaged in tooMany)
         {
             try
             {
@@ -460,7 +717,23 @@ internal static class Program
             {
             }
         }
-        Check(both && clock.ElapsedMilliseconds < 1000, "a count too big for the data is refused before anything that size is made");
+        Check(both && clock.ElapsedMilliseconds < 1000, $"a count too big for the data is refused before anything that size is made ({tooMany.Count} kinds, version 3's included)");
+
+        // A thing pointing at a look or a path that isn't there.
+        RawAttempt bad = Sample(5, 60, 3, world: false);
+        bad.Looks.Add(new ThingLook());
+        bad.Things.Add(new ThingTrack { Look = 1 });
+        bool badLook = false;
+        try
+        {
+            byte[] bytes = AttemptCodec.Encode(bad);
+            AttemptCodec.Decode(bytes, 0, bytes.Length);
+        }
+        catch (InvalidDataException)
+        {
+            badLook = true;
+        }
+        Check(badLook, "a thing with a look that isn't there is refused");
     }
 
     // Moving like V1 does: the mouse turns smoothly, speed builds and drops, jumps arc, dashes burst
@@ -585,6 +858,91 @@ internal static class Program
         a.Events = a.Events.OrderBy(e => e.Sample).ToList();
     }
 
+    // Everything else, the way the recorder sees it: projectiles flying (a key every world step), shotgun
+    // pellets in bursts, rockets, nails that stick in walls (no keys once they stop), gibs falling and resting,
+    // a platform going up and down now and then (a level object, by path), explosions, beams and a crate breaking.
+    private static void Battle(RawAttempt a, int seed)
+    {
+        var random = new Random(seed);
+        int stride = Math.Max(1, a.EnemyStride);
+        double dt = (double)stride / a.SampleRate;
+        int ticks = (a.Count - 1) / stride;
+        string[] kinds = { "Projectile", "Pellet", "Rocket", "Nail", "Gib", "Coin" };
+        foreach (string kind in kinds)
+        {
+            a.Looks.Add(new ThingLook
+            {
+                Name = kind,
+                Color = 0xFF8020FFu,
+                SizeX = 0.4f, SizeY = 0.4f, SizeZ = 1.2f,
+                Parts = { new LookPart { Mesh = kind + " mesh", Vertices = 24 * kind.Length, Materials = new[] { kind + " material", "Glow" }, RW = 1f, SX = 1f, SY = 1f, SZ = 1f } },
+            });
+        }
+        a.Looks.Add(new ThingLook { Name = "Platform", Parts = { new LookPart { Mesh = "Cube", Vertices = 24, Materials = new[] { "Metal" }, SX = 8f, SY = 0.5f, SZ = 8f, RW = 1f } } });
+        int platformPath = a.AddThingPath("Level#0/3 - Shaft#0/Elevator#0");
+        int id = 0;
+        for (int tick = 0; tick < ticks; tick++)
+        {
+            int spawns = tick % 6 == 0 ? (random.Next(4) == 0 ? 8 : 1) : 0;  // (a shot every few ticks, now and then a shotgun burst)
+            for (int s = 0; s < spawns; s++)
+            {
+                int look = spawns == 8 ? 1 : random.Next(kinds.Length);
+                var t = new ThingTrack { Id = id++, Kind = look == 4 ? ThingKind.Debris : ThingKind.Projectile, Look = look, Gone = true };
+                double x = random.Next(-30, 30), y = 2, z = random.Next(-30, 30);
+                double vx = (random.NextDouble() - 0.5) * 80, vy = random.NextDouble() * 10, vz = (random.NextDouble() - 0.5) * 80;
+                bool falls = look == 4 || look == 5;
+                int life = random.Next(8, 90), rest = look == 3 || look == 4 ? random.Next(30, 300) : 0;
+                double yaw = Math.Atan2(vx, vz);
+                for (int k = 0; k < life && tick + k <= ticks; k++)
+                {
+                    if (falls)
+                    {
+                        vy -= 30 * dt;
+                    }
+                    x += vx * dt;
+                    y = Math.Max(0, y + vy * dt);
+                    z += vz * dt;
+                    double qy = Math.Sin(yaw * 0.5), qw = Math.Cos(yaw * 0.5);
+                    t.Add((tick + k) * stride, (int)Math.Round(x * 100), (int)Math.Round(y * 100), (int)Math.Round(z * 100),
+                        0, Coarse(qy, 16), 0, Coarse(Math.Abs(qw), 16), 1000);
+                }
+                t.End = Math.Min(a.Count - 1, (tick + life + rest) * stride);
+                a.Things.Add(t);
+            }
+            if (tick % 40 == 0)
+            {
+                a.WorldEvents.Add(new WorldEvent
+                {
+                    Sample = tick * stride, Kind = WorldEventKind.Explosion, X = random.Next(-3000, 3000), Y = 200, Z = random.Next(-3000, 3000),
+                    Size = 5500, Life = 250, Color = 0xFFA040FFu, Look = -1, Path = -1,
+                });
+            }
+            if (tick % 9 == 0)
+            {
+                int x = random.Next(-3000, 3000), z = random.Next(-3000, 3000);
+                a.WorldEvents.Add(new WorldEvent
+                {
+                    Sample = tick * stride, Kind = WorldEventKind.Beam, X = x, Y = 250, Z = z, ToX = x + random.Next(-6000, 6000), ToY = 100, ToZ = z + random.Next(-6000, 6000),
+                    Size = 500, Life = 330, Color = 0xFFFFC0FFu, Look = -1, Path = -1,
+                });
+            }
+        }
+        a.WorldEvents.Add(new WorldEvent { Sample = a.Count / 2, Kind = WorldEventKind.Break, X = 500, Y = 50, Z = -700, Size = 1500, Color = 0x806040FFu, Look = 0, Path = platformPath, RotW = 32767 });
+
+        // The platform: up for 3 s, wait 5 s, down for 3 s, wait 5 s...
+        var platform = new ThingTrack { Id = id, Kind = ThingKind.Mover, Look = a.Looks.Count - 1, Path = platformPath, End = a.Count - 1 };
+        for (int tick = 0; tick < ticks; tick++)
+        {
+            double cycle = tick * dt % 16;
+            if (cycle < 3 || (cycle >= 8 && cycle < 11) || tick == 0)
+            {
+                double height = cycle < 8 ? cycle / 3 * 12 : 12 - (cycle - 8) / 3 * 12;
+                platform.Add(tick * stride, 4000, (int)Math.Round(Math.Clamp(height, 0, 12) * 100), -1500, 0, 0, 0, 32767, 1000);
+            }
+        }
+        a.Things.Add(platform);
+    }
+
     private static short Coarse(double q, int step) => (short)(Math.Clamp(Math.Round(q * 32767 / step), short.MinValue / step, short.MaxValue / step) * step);
 
     private static void Compression()
@@ -606,12 +964,21 @@ internal static class Program
 
         Crowd(fast, 10, 77);
         int enemySamples = fast.Enemies.Sum(e => e.Count);
-        int crowded = AttemptCodec.Encode(fast).Length;
+        int crowded = AttemptCodec.Encode(fast).Length;  // (the things' empty tables cost a few bytes)
         int world = crowded - packed60;
         Console.WriteLine($"        ...with 10 enemies about and 30 doors: {crowded / 1024.0:0.0} KB; the world is {world / 1024.0:0.0} KB of it "
             + $"({enemySamples} enemy samples at {fast.SampleRate / fast.EnemyStride} Hz, {world / 60.0:0} bytes/s, {enemySamples * plainEnemySample / 1024.0:0.0} KB as plain structs)");
         Check(world * 4 < enemySamples * plainEnemySample, "the enemies are at least 4x smaller than plain samples");
         Check(world < packed60 * 2, "ten enemies cost less than twice V1 itself");
+
+        int crowdedBytes = crowded;
+        Battle(fast, 77);
+        int keys = fast.Things.Sum(t => t.Count);
+        int battle = AttemptCodec.Encode(fast).Length;
+        Console.WriteLine($"        ...and a battle (WorldDetail = Everything): {battle / 1024.0:0.0} KB; {fast.Things.Count} things ({keys} keys), {fast.WorldEvents.Count} explosions and beams "
+            + $"add {(battle - crowdedBytes) / 1024.0:0.0} KB ({(battle - crowdedBytes) / 60.0:0} bytes/s, {keys * 26 / 1024.0:0.0} KB as plain structs)");
+        Check(battle - crowdedBytes < keys * 26 / 4, "the things are at least 4x smaller than plain keys");
+        Check(Same(fast, RoundTrip(fast)), "...and come back exactly");
 
         RawAttempt exact = Smooth(60 * 60, 123, 60);
         Crowd(exact, 10, 77, step: 1);
@@ -685,6 +1052,11 @@ internal static class Program
 
         SessionData data = SessionFile.Load(first, log.Add);
         Check(data.Info.Complete && data.Attempts.Count == 5, "the winning attempt completes the run (5 attempts)");
+        bool reread = data.Attempts.All(a => a.SourcePath == first && Same(a, SessionFile.ReadAttemptAt(a.SourcePath, a.SourceOffset, a.SourceLength)));
+        RawAttempt light = SessionFile.ReadAttemptAt(first, data.Attempts[2].SourceOffset, data.Attempts[2].SourceLength, world: false);
+        Check(reread && light.Things.Count == 0 && light.Count == data.Attempts[2].Count, "each attempt reads again from where it is in the file (a replay's worlds, later)");
+        Check(SessionFile.ReadAttemptAt(first, data.Attempts[2].SourceOffset + 1, data.Attempts[2].SourceLength) == null
+            && SessionFile.ReadAttemptAt(first, data.Attempts[2].SourceOffset, data.Attempts[2].SourceLength + 1) == null, "...and not from anywhere else");
         Check(data.Attempts[4].End == AttemptEnd.Finish && data.Attempts[4].Number == 5, "attempt 5 is the finish");
         Check(data.Info.Header.Scene == "Level 1-1" && data.Info.Header.Difficulty == 3, "the header remembers the level");
 

@@ -36,7 +36,10 @@ namespace UltraAttempts.Replay
 
         private readonly Dictionary<int, Kind> kinds = new Dictionary<int, Kind>();
         private Ghost shown;
+        private GhostWorld shownWorld;
         private Body[] bodies = Array.Empty<Body>();   // per enemy of the attempt shown
+        private readonly bool overlays;
+        private int overlayMeshes;
         private int madeThisFrame;
         private bool kindThisFrame;
         private int statesAsked, statesFound;          // (for the log: do the recorded animations match the copies?)
@@ -63,6 +66,8 @@ namespace UltraAttempts.Replay
             public Vector3 Size = DefaultSize;
             public readonly Dictionary<int, int> Owners = new Dictionary<int, int>();  // state -> which animator has it (-1: none)
             public readonly Stack<Body> Free = new Stack<Body>();
+            public Mesh Overlay;                            // the other attempts' see-through one: posed as the copy came, in the enemy's own space
+            public readonly List<Mesh> Owned = new List<Mesh>();
         }
 
         private sealed class Body
@@ -89,6 +94,7 @@ namespace UltraAttempts.Replay
             this.holder = holder;
             layer = (cam.cullingMask & 1) != 0 ? 0 : FirstLayer(cam.cullingMask);
             material = MakeMaterial();
+            overlays = Settings.OverlayWorlds.Value;
         }
 
         // ---------------------------------------------------------------- starting and stopping
@@ -119,7 +125,7 @@ namespace UltraAttempts.Replay
             }
             if (!anyWorld)
             {
-                Plugin.Log.LogInfo("these attempts were recorded without their world (before 1.1, or with RecordWorld off): no enemies or doors to show");
+                Plugin.Log.LogInfo("these attempts were recorded without their world (before 1.1, or with WorldDetail = Off): no enemies or doors to show");
                 return;
             }
             float started = Time.realtimeSinceStartup;
@@ -148,7 +154,7 @@ namespace UltraAttempts.Replay
                 }
             }
             SetLevelHidden(anyEnemies);
-            Plugin.Log.LogInfo($"replay world: {models} of {most.Count} kinds of enemy modelled ({copies} copies ready), {movable} of {paths.Count} doors movable, {hidden.Count} of the level's enemy renderers hidden, {(Time.realtimeSinceStartup - started) * 1000f:0} ms");
+            Plugin.Log.LogInfo($"replay world: {models} of {most.Count} kinds of enemy modelled ({copies} copies ready, {overlayMeshes} see-through for the other attempts), {movable} of {paths.Count} doors movable, {hidden.Count} of the level's enemy renderers hidden, {(Time.realtimeSinceStartup - started) * 1000f:0} ms");
         }
 
         public void Dispose()
@@ -185,6 +191,14 @@ namespace UltraAttempts.Replay
                 {
                     UnityEngine.Object.Destroy(kind.Template);
                 }
+                if (kind.Overlay != null)
+                {
+                    UnityEngine.Object.Destroy(kind.Overlay);
+                }
+                foreach (Mesh mesh in kind.Owned)
+                {
+                    UnityEngine.Object.Destroy(mesh);
+                }
             }
             kinds.Clear();
             UnityEngine.Object.Destroy(material);
@@ -206,8 +220,9 @@ namespace UltraAttempts.Replay
 
         // ---------------------------------------------------------------- every frame
 
-        // The world as g saw it t seconds into the replay (null: nobody's, the level as it is now).
-        public void Update(Ghost g, float t)
+        // The world as g saw it t seconds into the replay (null: nobody's, the level as it is now). w: its
+        // enemies (null while they're still being read: the doors show meanwhile).
+        public void Update(Ghost g, GhostWorld w, float t)
         {
             madeThisFrame = 0;
             kindThisFrame = false;
@@ -217,23 +232,28 @@ namespace UltraAttempts.Replay
             {
                 g = null;
             }
-            if (g != shown)
+            if (g == null)
+            {
+                w = null;
+            }
+            if (g != shown || w != shownWorld)
             {
                 for (int i = 0; i < bodies.Length; i++)
                 {
                     Release(i);
                 }
                 shown = g;
-                bodies = g != null && g.Enemies.Length > 0 ? new Body[g.Enemies.Length] : Array.Empty<Body>();
+                shownWorld = w;
+                bodies = w != null && w.Enemies.Length > 0 ? new Body[w.Enemies.Length] : Array.Empty<Body>();
             }
             ShowDoors(g, t);
-            if (g == null)
+            if (g == null || w == null)
             {
                 return;
             }
 
             float at = Mathf.Min(t, g.Duration);
-            EnemyPath[] enemies = g.Enemies;
+            EnemyPath[] enemies = w.Enemies;
             for (int i = 0; i < enemies.Length; i++)
             {
                 EnemyPath e = enemies[i];
@@ -266,6 +286,51 @@ namespace UltraAttempts.Replay
                 }
                 Place(body, e, s, punch);
                 Animate(body, s);
+            }
+        }
+
+        // Another attempt's enemies, see-through in its colour (OverlayWorlds): each kind's copy as it came, no
+        // animation, and a pop where it died. budget: draws left this frame (each enemy takes one or two).
+        public void DrawOverlay(Ghost g, GhostWorld w, Color tint, float t, ref int budget)
+        {
+            if (w == null || !Settings.ShowWorld.Value)
+            {
+                return;
+            }
+            float at = Mathf.Min(t, g.Duration);
+            EnemyPath[] enemies = w.Enemies;
+            for (int i = 0; i < enemies.Length && budget > 0; i++)
+            {
+                EnemyPath e = enemies[i];
+                if (at < e.From || at > e.To)
+                {
+                    if (e.Died && t >= e.To && t - e.To < PopLife)
+                    {
+                        float k = (t - e.To) / PopLife;
+                        EnemyPath.State end = e.At(e.To);
+                        Vector3 middle = Middle(e, end, out float size);
+                        Draw(sphere, Matrix4x4.TRS(middle, Quaternion.identity, Vector3.one * Mathf.Lerp(0.3f, 1.1f * size, 1f - (1f - k) * (1f - k))), new Color(tint.r, tint.g, tint.b, tint.a * (1f - k)));
+                        budget--;
+                    }
+                    continue;
+                }
+                if (e.Died && at >= e.To)
+                {
+                    continue;
+                }
+                EnemyPath.State s = e.At(at);
+                Kind kind = kinds.TryGetValue(e.Type, out Kind found) ? found : null;
+                if (kind?.Overlay != null)
+                {
+                    Draw(kind.Overlay, Matrix4x4.TRS(s.Pos, s.Rot, Vector3.one * e.Scale), tint);
+                }
+                else
+                {
+                    Vector3 center = kind?.Template != null ? kind.Center : DefaultCenter;
+                    Vector3 size = (kind?.Template != null ? kind.Size : DefaultSize) * e.Scale;
+                    Draw(cube, Matrix4x4.TRS(s.Pos + s.Rot * (center * e.Scale), s.Rot, size), tint);
+                }
+                budget--;
             }
         }
 
@@ -369,9 +434,9 @@ namespace UltraAttempts.Replay
                         bounds.Encapsulate(r.bounds);
                     }
                 }
-                copy.SetActive(false);
                 if (!any)
                 {
+                    copy.SetActive(false);
                     UnityEngine.Object.Destroy(copy);
                     return false;
                 }
@@ -382,6 +447,11 @@ namespace UltraAttempts.Replay
                 kind.BaseScale = own > 1e-4f ? own : 1f;
                 kind.Center = enemy.InverseTransformPoint(bounds.center);
                 kind.Size = bounds.size / kind.BaseScale;
+                if (overlays)
+                {
+                    BakeOverlay(kind, copy, enemy, type);  // (while it's still active: skinned meshes bake then)
+                }
+                copy.SetActive(false);
                 kind.Template = copy;
                 return true;
             }
@@ -390,6 +460,59 @@ namespace UltraAttempts.Replay
                 copy.SetActive(false);  // (not left standing at the world's origin)
                 UnityEngine.Object.Destroy(copy);
                 throw;
+            }
+        }
+
+        // The copy as one shaded mesh in the enemy's own space (its scale taken out), for the other attempts'
+        // see-through enemies: skinned parts baked as they're posed (else read back from the GPU), the rest as
+        // they are. None if nothing can be read (a box stands in).
+        private void BakeOverlay(Kind kind, GameObject copy, Transform enemy, int type)
+        {
+            try
+            {
+                Matrix4x4 toEnemy = Matrix4x4.TRS(enemy.position, enemy.rotation, Vector3.one * kind.BaseScale).inverse;
+                var verts = new List<Vector3>();
+                var normals = new List<Vector3>();
+                var tris = new List<int>();
+                foreach (Renderer r in copy.GetComponentsInChildren<Renderer>())
+                {
+                    if (!r.enabled || verts.Count > 150000)
+                    {
+                        continue;
+                    }
+                    Mesh mesh = null;
+                    Matrix4x4 toWorld = r.transform.localToWorldMatrix;
+                    if (r is SkinnedMeshRenderer skinned && skinned.sharedMesh != null)
+                    {
+                        mesh = ModelMeshes.Snapshot(skinned, kind.Owned, out toWorld);  // (any readable copy stays: the copies use it)
+                    }
+                    else if (r is MeshRenderer)
+                    {
+                        MeshFilter filter = r.GetComponent<MeshFilter>();
+                        mesh = filter != null ? filter.sharedMesh : null;
+                        if (mesh != null && !mesh.isReadable)
+                        {
+                            mesh = ModelMeshes.ReadableCopy(mesh, null);
+                            if (mesh != null)
+                            {
+                                kind.Owned.Add(mesh);
+                            }
+                        }
+                    }
+                    if (mesh != null && mesh.isReadable)
+                    {
+                        ModelMeshes.Append(mesh, toEnemy * toWorld, verts, normals, tris);
+                    }
+                }
+                if (verts.Count > 0 && tris.Count > 0)
+                {
+                    kind.Overlay = ModelMeshes.Build("UltraAttempts overlay " + TypeName(type), verts, normals, tris);
+                    overlayMeshes++;
+                }
+            }
+            catch (Exception e)
+            {
+                ModelMeshes.LogOnce($"couldn't make the see-through {TypeName(type)} for the other attempts ({e.GetBaseException().Message}): a box instead");
             }
         }
 

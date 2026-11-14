@@ -12,8 +12,9 @@ using HarmonyLib;
 internal static class Program
 {
     // Every hook in Patches: cheats, scene loads, restarts, results, rooms off, doors opening and
-    // closing, the camera, Escape, continuing from the results screen.
-    private const int Expected = 10;
+    // closing, explosions, beams (hitscan and lasting), breakables, the camera, Escape, continuing from the
+    // results screen.
+    private const int Expected = 14;
 
     private static string game;
     private static string plugin;
@@ -58,8 +59,8 @@ internal static class Program
             {
                 continue;
             }
-            string label = $"{target.declaringType.Name}.{target.methodName}";
-            MethodBase original = AccessTools.Method(target.declaringType, target.methodName);
+            string label = $"{target.declaringType.Name}.{target.methodName}" + (target.argumentTypes != null ? $"({string.Join(", ", target.argumentTypes.Select(t => t.Name))})" : "");
+            MethodBase original = AccessTools.Method(target.declaringType, target.methodName, target.argumentTypes);
             if (original == null)
             {
                 Console.WriteLine($"  FAIL  {label}: not found");

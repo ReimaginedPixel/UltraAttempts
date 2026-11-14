@@ -192,6 +192,40 @@ namespace UltraAttempts.Recording
             }
         }
 
+        // Explosions, beams and breakables breaking (WorldDetail = Everything): shown at the next sample.
+        public void OnExplosion(Explosion e, Color color, bool replaying)
+        {
+            if (current != null && !replaying)
+            {
+                world.Things.OnExplosion(e, color, current.Count);
+            }
+        }
+
+        public void OnBeam(RevolverBeam beam, bool replaying)
+        {
+            if (current != null && !replaying)
+            {
+                world.Things.OnBeam(beam, current.Count);
+            }
+        }
+
+        // (kept for the whole scene: one switched on between attempts still shows in the next)
+        public void OnContinuousBeam(ContinuousBeam beam, bool replaying)
+        {
+            if (level != null && !replaying)
+            {
+                world.Things.OnContinuousBeam(beam);
+            }
+        }
+
+        public void OnBreak(Breakable b, bool replaying)
+        {
+            if (current != null && !replaying)
+            {
+                world.Things.OnBreak(b, current.Count);
+            }
+        }
+
         // ULTRAKILL is about to load a scene: restarting this level (no checkpoint), or leaving it.
         public void OnLeavingScene(string target)
         {
@@ -294,7 +328,7 @@ namespace UltraAttempts.Recording
             clock = Time.timeAsDouble;
             cameraSteps = 0;
             ownSteps = 0;
-            world.Begin(current, Settings.World.Value != WorldDetail.Off);
+            world.Begin(current, Settings.World.Value);
             last = Capture(nm);
             Emit(nm, last, current, 1f);
             nextTick = interval;
@@ -336,12 +370,23 @@ namespace UltraAttempts.Recording
             {
                 return;
             }
-            // (a door that moved after the last sample shows at it)
-            for (int i = attempt.Events.Count - 1; i >= 0 && attempt.Events[i].Sample >= attempt.Count; i--)
+            // (a door that moved, or anything that happened, after the last sample shows at it)
+            int lastSample = attempt.Count - 1;
+            for (int i = attempt.Events.Count - 1; i >= 0 && attempt.Events[i].Sample > lastSample; i--)
             {
                 AttemptEvent e = attempt.Events[i];
-                e.Sample = attempt.Count - 1;
+                e.Sample = lastSample;
                 attempt.Events[i] = e;
+            }
+            for (int i = attempt.WorldEvents.Count - 1; i >= 0 && attempt.WorldEvents[i].Sample > lastSample; i--)
+            {
+                WorldEvent e = attempt.WorldEvents[i];
+                e.Sample = lastSample;
+                attempt.WorldEvents[i] = e;
+            }
+            foreach (ThingTrack t in attempt.Things)
+            {
+                t.End = Math.Min(t.End, lastSample);
             }
             store.SubmitAttempt(level, attempt, reason == AttemptEnd.Finish);
         }
@@ -367,6 +412,35 @@ namespace UltraAttempts.Recording
             string interpolation = nm != null && nm.rb != null ? nm.rb.interpolation.ToString() : "?";
             Plugin.Log.LogInfo($"recorded attempt {a.Number}: {a.Duration:0.0} s at {a.SampleRate} samples/s ({cameraSteps} frames sampled after the camera, {ownSteps} without it); "
                 + $"{a.Enemies.Count} enemies ({died} killed, sampled every {a.EnemyStride}), {a.DoorPaths.Count} doors ({doorChanges} opened or closed); V1's rigidbody interpolation: {interpolation}");
+            if (Settings.World.Value == WorldDetail.Everything)
+            {
+                Plugin.Log.LogInfo("...and everything else (WorldDetail = Everything): " + Everything(a));
+            }
+        }
+
+        // What an attempt recorded besides V1 and its enemies, for the log.
+        internal static string Everything(RawAttempt a)
+        {
+            var kinds = new int[5];
+            int keys = 0, level = 0, parts = 0;
+            foreach (ThingTrack t in a.Things)
+            {
+                kinds[Mathf.Clamp((int)t.Kind, 0, kinds.Length - 1)]++;
+                keys += t.Count;
+                level += t.Path >= 0 ? 1 : 0;
+            }
+            foreach (ThingLook look in a.Looks)
+            {
+                parts += look.Parts.Count;
+            }
+            var events = new int[4];
+            foreach (WorldEvent e in a.WorldEvents)
+            {
+                events[Mathf.Clamp((int)e.Kind, 0, events.Length - 1)]++;
+            }
+            return $"{a.Things.Count} things ({kinds[(int)ThingKind.Projectile]} projectiles, {kinds[(int)ThingKind.Debris]} debris, {kinds[(int)ThingKind.Prop]} props, "
+                + $"{kinds[(int)ThingKind.Mover]} movers; {level} of them the level's own), {keys} keys, {a.Looks.Count} looks ({parts} meshes), "
+                + $"{events[(int)WorldEventKind.Explosion]} explosions, {events[(int)WorldEventKind.Beam]} beams, {events[(int)WorldEventKind.Break]} breaks";
         }
 
         // This frame, once: a sample for every tick of game time since the last step.

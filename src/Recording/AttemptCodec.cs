@@ -12,10 +12,12 @@ namespace UltraAttempts.Recording
     // deltas, all as zigzag varints, then the whole thing deflated. Standing still costs about nothing.
     //
     // Version 2 adds the world after the events: the door paths, then the enemies, packed the same way
-    // (one column per channel, across every enemy). Version 1 (UltraAttempts 1.0) still reads, with no world.
+    // (one column per channel, across every enemy). Version 3 adds everything else after that (WorldDetail =
+    // Everything): the things that moved, what they looked like, and the explosions, beams and breaks. Versions 1
+    // (UltraAttempts 1.0, no world) and 2 (no things) still read.
     public static class AttemptCodec
     {
-        public const byte Version = 2;
+        public const byte Version = 3;
 
         public static byte[] Encode(RawAttempt a)
         {
@@ -24,7 +26,11 @@ namespace UltraAttempts.Recording
             {
                 enemySamples += e.Count;
             }
-            var w = new VarWriter(64 + a.Count * 12 + enemySamples * 12);
+            foreach (ThingTrack t in a.Things)
+            {
+                enemySamples += t.Count;
+            }
+            var w = new VarWriter(64 + a.Count * 12 + enemySamples * 12 + a.WorldEvents.Count * 24);
             w.Byte(Version);
             w.UInt((uint)a.Number);
             w.Byte((byte)a.Start);
@@ -69,6 +75,7 @@ namespace UltraAttempts.Recording
             }
 
             EncodeWorld(w, a);
+            EncodeThings(w, a);
 
             using (var output = new MemoryStream(w.Length / 2 + 16))
             {
@@ -80,7 +87,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        // world: false skips the enemies and doors (they're the bulk of a version-2 attempt in memory).
+        // world: false skips the enemies, doors and things (they're the bulk of a recent attempt in memory).
         public static RawAttempt Decode(byte[] data, int offset, int length, bool world = true)
         {
             byte[] raw;
@@ -153,6 +160,10 @@ namespace UltraAttempts.Recording
             if (version >= 2 && world)
             {
                 DecodeWorld(r, a);
+                if (version >= 3)
+                {
+                    DecodeThings(r, a);
+                }
             }
             return a;
         }
@@ -334,6 +345,324 @@ namespace UltraAttempts.Recording
                 Undeltas(r, e.Health, e.Count);
             }
             a.Enemies = tracks;
+        }
+
+        // Version 3: one table of every name used (looks, meshes, materials, level paths), the looks, the level
+        // paths, the things (each one's header, then each channel for every thing in turn: key samples and
+        // positions and rotations predicted, sizes as deltas), then the events, one after another.
+        private static void EncodeThings(VarWriter w, RawAttempt a)
+        {
+            var strings = new List<string>();
+            var index = new Dictionary<string, int>();
+            foreach (ThingLook look in a.Looks)
+            {
+                Name(look?.Name, strings, index);
+                foreach (LookPart part in look?.Parts ?? NoParts)
+                {
+                    Name(part?.Mesh, strings, index);
+                    foreach (string material in part?.Materials ?? Array.Empty<string>())
+                    {
+                        Name(material, strings, index);
+                    }
+                }
+            }
+            foreach (string path in a.ThingPaths)
+            {
+                Name(path, strings, index);
+            }
+            w.UInt((uint)strings.Count);
+            foreach (string s in strings)
+            {
+                w.String(s);
+            }
+
+            w.UInt((uint)a.Looks.Count);
+            foreach (ThingLook look in a.Looks)
+            {
+                ThingLook l = look ?? new ThingLook();
+                w.UInt((uint)index[l.Name ?? ""]);
+                w.UInt(l.Color);
+                w.Float(l.CenterX);
+                w.Float(l.CenterY);
+                w.Float(l.CenterZ);
+                w.Float(l.SizeX);
+                w.Float(l.SizeY);
+                w.Float(l.SizeZ);
+                List<LookPart> parts = l.Parts ?? NoParts;
+                w.UInt((uint)parts.Count);
+                foreach (LookPart part in parts)
+                {
+                    LookPart p = part ?? new LookPart();
+                    w.UInt((uint)index[p.Mesh ?? ""]);
+                    w.UInt((uint)Math.Max(0, p.Vertices));
+                    string[] materials = p.Materials ?? Array.Empty<string>();
+                    w.UInt((uint)materials.Length);
+                    foreach (string material in materials)
+                    {
+                        w.UInt((uint)index[material ?? ""]);
+                    }
+                    w.Float(p.PX);
+                    w.Float(p.PY);
+                    w.Float(p.PZ);
+                    w.Float(p.RX);
+                    w.Float(p.RY);
+                    w.Float(p.RZ);
+                    w.Float(p.RW);
+                    w.Float(p.SX);
+                    w.Float(p.SY);
+                    w.Float(p.SZ);
+                }
+            }
+
+            w.UInt((uint)a.ThingPaths.Count);
+            foreach (string path in a.ThingPaths)
+            {
+                w.UInt((uint)index[path ?? ""]);
+            }
+
+            List<ThingTrack> things = a.Things;
+            w.UInt((uint)things.Count);
+            int lastId = 0, lastEnd = 0;
+            foreach (ThingTrack t in things)
+            {
+                w.Int(t.Id - lastId);
+                lastId = t.Id;
+                w.Byte((byte)t.Kind);
+                w.UInt((uint)(t.Look + 1));
+                w.UInt((uint)(t.Path + 1));
+                w.Float(t.ScaleX);
+                w.Float(t.ScaleY);
+                w.Float(t.ScaleZ);
+                w.Int(t.End - lastEnd);
+                lastEnd = t.End;
+                w.Byte((byte)(t.Gone ? 1 : 0));
+                w.UInt((uint)t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.Sample, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.PosX, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.PosY, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.PosZ, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.RotX, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.RotY, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.RotZ, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Predicted(w, t.RotW, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Deltas(w, t.Scale, t.Count);
+            }
+
+            w.UInt((uint)a.WorldEvents.Count);
+            var last = new WorldEvent();
+            foreach (WorldEvent e in a.WorldEvents)
+            {
+                w.Int(e.Sample - last.Sample);
+                w.Byte((byte)e.Kind);
+                w.Int(e.X - last.X);
+                w.Int(e.Y - last.Y);
+                w.Int(e.Z - last.Z);
+                w.Int(e.ToX - e.X);
+                w.Int(e.ToY - e.Y);
+                w.Int(e.ToZ - e.Z);
+                w.Int(e.Size);
+                w.Int(e.Life);
+                w.UInt(e.Color);
+                w.UInt((uint)(e.Look + 1));
+                w.UInt((uint)(e.Path + 1));
+                w.Int(e.RotX);
+                w.Int(e.RotY);
+                w.Int(e.RotZ);
+                w.Int(e.RotW);
+                last = e;
+            }
+        }
+
+        private static readonly List<LookPart> NoParts = new List<LookPart>();
+
+        private static void Name(string s, List<string> strings, Dictionary<string, int> index)
+        {
+            s = s ?? "";
+            if (!index.ContainsKey(s))
+            {
+                index[s] = strings.Count;
+                strings.Add(s);
+            }
+        }
+
+        private static void DecodeThings(VarReader r, RawAttempt a)
+        {
+            var strings = new string[r.Count(1)];
+            for (int i = 0; i < strings.Length; i++)
+            {
+                strings[i] = r.String();
+            }
+            string Str(uint i) => i < strings.Length ? strings[i] : throw new InvalidDataException("bad name");
+
+            int looks = r.Count(27);  // (name, colour, bounds, parts: at least 27 bytes a look)
+            for (int i = 0; i < looks; i++)
+            {
+                var look = new ThingLook
+                {
+                    Name = Str(r.UInt()),
+                    Color = r.UInt(),
+                    CenterX = r.Float(),
+                    CenterY = r.Float(),
+                    CenterZ = r.Float(),
+                    SizeX = r.Float(),
+                    SizeY = r.Float(),
+                    SizeZ = r.Float(),
+                };
+                int parts = r.Count(43);  // (mesh, vertices, materials, ten floats)
+                for (int p = 0; p < parts; p++)
+                {
+                    var part = new LookPart { Mesh = Str(r.UInt()), Vertices = (int)Math.Min(int.MaxValue, r.UInt()) };
+                    var materials = new string[r.Count(1)];
+                    for (int m = 0; m < materials.Length; m++)
+                    {
+                        materials[m] = Str(r.UInt());
+                    }
+                    part.Materials = materials;
+                    part.PX = r.Float();
+                    part.PY = r.Float();
+                    part.PZ = r.Float();
+                    part.RX = r.Float();
+                    part.RY = r.Float();
+                    part.RZ = r.Float();
+                    part.RW = r.Float();
+                    part.SX = r.Float();
+                    part.SY = r.Float();
+                    part.SZ = r.Float();
+                    look.Parts.Add(part);
+                }
+                a.Looks.Add(look);
+            }
+
+            int paths = r.Count(1);
+            for (int i = 0; i < paths; i++)
+            {
+                a.ThingPaths.Add(Str(r.UInt()));
+            }
+
+            int count = r.Count(19);
+            var things = new List<ThingTrack>(count);
+            int lastId = 0, lastEnd = 0;
+            long keys = 0;
+            for (int k = 0; k < count; k++)
+            {
+                var t = new ThingTrack();
+                lastId += r.Int();
+                t.Id = lastId;
+                t.Kind = (ThingKind)r.Byte();
+                t.Look = (int)r.UInt() - 1;
+                t.Path = (int)r.UInt() - 1;
+                if (t.Look < -1 || t.Look >= a.Looks.Count || t.Path < -1 || t.Path >= a.ThingPaths.Count)
+                {
+                    throw new InvalidDataException("bad thing");
+                }
+                t.ScaleX = r.Float();
+                t.ScaleY = r.Float();
+                t.ScaleZ = r.Float();
+                lastEnd += r.Int();
+                t.End = lastEnd;
+                t.Gone = r.Byte() != 0;
+                int n = (int)r.UInt();
+                keys += n;
+                if (n < 0 || keys * 9 > r.Remaining)
+                {
+                    throw new EndOfStreamException("attempt data is cut short");  // (nine channels: at least 9 bytes a key)
+                }
+                t.Reserve(n);
+                t.Count = n;
+                things.Add(t);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.Sample, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.PosX, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.PosY, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.PosZ, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.RotX, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.RotY, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.RotZ, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Unpredicted(r, t.RotW, t.Count);
+            }
+            foreach (ThingTrack t in things)
+            {
+                Undeltas(r, t.Scale, t.Count);
+            }
+            a.Things = things;
+
+            int events = r.Count(17);
+            var e = new WorldEvent();
+            for (int i = 0; i < events; i++)
+            {
+                e.Sample += r.Int();
+                e.Kind = (WorldEventKind)r.Byte();
+                e.X += r.Int();
+                e.Y += r.Int();
+                e.Z += r.Int();
+                e.ToX = e.X + r.Int();
+                e.ToY = e.Y + r.Int();
+                e.ToZ = e.Z + r.Int();
+                e.Size = r.Int();
+                e.Life = r.Int();
+                e.Color = r.UInt();
+                e.Look = (int)r.UInt() - 1;
+                e.Path = (int)r.UInt() - 1;
+                if (e.Look < -1 || e.Look >= a.Looks.Count || e.Path < -1 || e.Path >= a.ThingPaths.Count)
+                {
+                    throw new InvalidDataException("bad world event");
+                }
+                e.RotX = (short)r.Int();
+                e.RotY = (short)r.Int();
+                e.RotZ = (short)r.Int();
+                e.RotW = (short)r.Int();
+                a.WorldEvents.Add(e);
+            }
         }
 
         // Each sample minus where the two before it say it'd be (2b - a). Positions are kept within

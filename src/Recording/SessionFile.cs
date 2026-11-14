@@ -146,8 +146,99 @@ namespace UltraAttempts.Recording
         }
 
         // Every attempt in the file, decoded. A damaged attempt is skipped (onError says which). world:
-        // false leaves out the enemies and doors (most of a recent attempt's size once decoded).
+        // false leaves out the enemies, doors and things (most of a recent attempt's size once decoded).
         public static SessionData Load(string path, Action<string> onError = null, bool world = true)
+        {
+            var attempts = new List<RawAttempt>();
+            SessionInfo info = Read(path, attempts.Add, onError, world);
+            return new SessionData { Info = info, Attempts = attempts };
+        }
+
+        // The same, one attempt at a time (a long run never has to be in memory all at once). Each attempt
+        // knows where its bytes are in the file (ReadAttemptAt reads it again from there).
+        public static SessionInfo Read(string path, Action<RawAttempt> each, Action<string> onError = null, bool world = true)
+        {
+            byte[] bytes = ReadAll(path);
+            using (var ms = new MemoryStream(bytes, writable: false))
+            using (var r = new BinaryReader(ms, Encoding.UTF8))
+            {
+                var info = new SessionInfo { Path = path, Header = ReadHeader(r) };
+                info.ValidLength = ms.Position;
+                while (TryReadBlockHeader(r, out byte type, out int length))
+                {
+                    int start = (int)ms.Position;
+                    if (type == BlockAttempt)
+                    {
+                        info.Attempts++;
+                        RawAttempt attempt = null;
+                        try
+                        {
+                            attempt = AttemptCodec.Decode(bytes, start, length, world);
+                            attempt.SourcePath = path;
+                            attempt.SourceOffset = start;
+                            attempt.SourceLength = length;
+                        }
+                        catch (Exception e)
+                        {
+                            onError?.Invoke($"{System.IO.Path.GetFileName(path)}: skipped a damaged attempt ({e.Message})");
+                        }
+                        if (attempt != null)
+                        {
+                            each(attempt);
+                        }
+                    }
+                    else if (type == BlockComplete && length >= 8)
+                    {
+                        r.ReadInt32();
+                        info.FinishLevelTime = r.ReadSingle();
+                        info.Complete = true;
+                    }
+                    ms.Position = start + length;
+                    info.ValidLength = ms.Position;
+                }
+                return info;
+            }
+        }
+
+        // One attempt read again from where Read found it (a replay reads the worlds back as it needs them).
+        // Null if that's no longer an attempt of that size (the file was replaced since).
+        public static RawAttempt ReadAttemptAt(string path, long offset, int length, bool world = true)
+        {
+            if (string.IsNullOrEmpty(path) || offset < 5 || length <= 0)
+            {
+                return null;
+            }
+            var bytes = new byte[length + 5];
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                if (offset + length > stream.Length)
+                {
+                    return null;
+                }
+                stream.Position = offset - 5;
+                int read = 0;
+                while (read < bytes.Length)
+                {
+                    int got = stream.Read(bytes, read, bytes.Length - read);
+                    if (got <= 0)
+                    {
+                        return null;
+                    }
+                    read += got;
+                }
+            }
+            if (bytes[0] != BlockAttempt || BitConverter.ToInt32(bytes, 1) != length)
+            {
+                return null;
+            }
+            RawAttempt attempt = AttemptCodec.Decode(bytes, 5, length, world);
+            attempt.SourcePath = path;
+            attempt.SourceOffset = offset;
+            attempt.SourceLength = length;
+            return attempt;
+        }
+
+        private static byte[] ReadAll(string path)
         {
             byte[] bytes;
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
@@ -168,38 +259,7 @@ namespace UltraAttempts.Recording
                     Array.Resize(ref bytes, read);
                 }
             }
-
-            using (var ms = new MemoryStream(bytes, writable: false))
-            using (var r = new BinaryReader(ms, Encoding.UTF8))
-            {
-                var data = new SessionData { Info = new SessionInfo { Path = path, Header = ReadHeader(r) } };
-                data.Info.ValidLength = ms.Position;
-                while (TryReadBlockHeader(r, out byte type, out int length))
-                {
-                    int start = (int)ms.Position;
-                    if (type == BlockAttempt)
-                    {
-                        data.Info.Attempts++;
-                        try
-                        {
-                            data.Attempts.Add(AttemptCodec.Decode(bytes, start, length, world));
-                        }
-                        catch (Exception e)
-                        {
-                            onError?.Invoke($"{System.IO.Path.GetFileName(path)}: skipped a damaged attempt ({e.Message})");
-                        }
-                    }
-                    else if (type == BlockComplete && length >= 8)
-                    {
-                        r.ReadInt32();
-                        data.Info.FinishLevelTime = r.ReadSingle();
-                        data.Info.Complete = true;
-                    }
-                    ms.Position = start + length;
-                    data.Info.ValidLength = ms.Position;
-                }
-                return data;
-            }
+            return bytes;
         }
 
         private static bool TryReadBlockHeader(BinaryReader r, out byte type, out int length)

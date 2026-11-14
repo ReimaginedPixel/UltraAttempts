@@ -140,8 +140,8 @@ namespace UltraAttempts
         }
 
         // The object at a PathOf path in the current scene (the same-named one in the same place,
-        // else an active one of that name, else any), or null.
-        public static Transform FindByPath(string path)
+        // else an active one of that name, else any), or null. exact: only the one in the same place.
+        public static Transform FindByPath(string path, bool exact = false)
         {
             if (string.IsNullOrEmpty(path))
             {
@@ -156,7 +156,7 @@ namespace UltraAttempts
                 string name = hash >= 0 ? step.Substring(0, hash) : step;
                 int.TryParse(hash >= 0 ? step.Substring(hash + 1) : "0", out int ordinal);
                 List<Transform> named = level.Where(c => CleanName(c.name) == name).ToList();
-                if (named.Count == 0)
+                if (named.Count == 0 || (exact && ordinal >= named.Count))
                 {
                     return null;
                 }

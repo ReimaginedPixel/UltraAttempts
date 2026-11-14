@@ -27,6 +27,7 @@ namespace UltraAttempts.Replay
         public Mesh Tinted;                                     // the gun as one shaded mesh, for see-through ghosts (null: its meshes can't be read)
         public Matrix4x4 Hold = Matrix4x4.identity;             // view space → the hand (the grip at the origin)
         public float HoldScale = 1f;
+        public float Reach = 0.7f;                              // from the grip to the end of the barrel, held (at size 1)
         public Matrix4x4 CameraFromView = Matrix4x4.identity;   // view space → the camera's (first person)
 
         public WeaponModel(string name)
@@ -68,6 +69,7 @@ namespace UltraAttempts.Replay
             // (held about a third of the way up from the back, a little under the middle)
             var grip = new Vector3(bounds.center.x, bounds.center.y - bounds.extents.y * 0.3f, bounds.min.z + bounds.size.z * 0.3f);
             Hold = Matrix4x4.Translate(-grip);
+            Reach = any ? Mathf.Max(0.1f, (bounds.max.z - grip.z) * HoldScale) : 0.7f;
             Tinted = BuildTinted();
         }
 

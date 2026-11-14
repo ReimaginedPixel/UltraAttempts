@@ -66,17 +66,23 @@ namespace UltraAttempts.Recording
         private static bool warnedFull;
         private static bool warnedFailure;
 
+        // Everything else (WorldDetail = Everything): projectiles, props, movers, explosions, beams.
+        public ThingRecorder Things { get; } = new ThingRecorder();
+
         // A new scene: nothing from the last one carries over.
         public void EnterScene()
         {
             End();
             doorPaths.Clear();
+            Things.EnterScene();
         }
 
-        // An attempt starts (record: false, it gets no world).
-        public void Begin(RawAttempt a, bool record)
+        // An attempt starts, with as much of its world as asked for (Off: none).
+        public void Begin(RawAttempt a, WorldDetail detail)
         {
             End();
+            bool record = detail != WorldDetail.Off;
+            Things.Begin(a, detail == WorldDetail.Everything);
             attempt = record ? a : null;
             failed = false;
             nextId = 0;
@@ -117,11 +123,13 @@ namespace UltraAttempts.Recording
             byEnemy.Clear();
             doors.Clear();
             attempt = null;
+            Things.End();
         }
 
-        // Once a frame, before its samples: how each tracked enemy is now.
+        // Once a frame, before its samples: how each tracked enemy (and thing) is now.
         public void Frame()
         {
+            Things.Frame();
             if (attempt == null || failed)
             {
                 return;
@@ -147,6 +155,7 @@ namespace UltraAttempts.Recording
         // An enemy sample, at attempt sample `sample`, `between` of the way from last frame to this one.
         public void Tick(int sample, float between)
         {
+            Things.Tick(sample, between);
             if (attempt == null || failed)
             {
                 return;
@@ -330,7 +339,7 @@ namespace UltraAttempts.Recording
                 (byte)Mathf.Clamp(Mathf.RoundToInt(health * 255f), 0, 255));
         }
 
-        private static short Coarse(short value) =>
+        internal static short Coarse(short value) =>
             (short)(Mathf.Clamp(Mathf.RoundToInt(value / (float)RotationStep), short.MinValue / RotationStep, short.MaxValue / RotationStep) * RotationStep);
 
         // Records a door's state if this attempt hasn't got it already (true if it was recorded).

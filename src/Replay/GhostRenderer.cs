@@ -126,6 +126,10 @@ namespace UltraAttempts.Replay
             public Vector3 LastBody;
             public float Phase;
             public float AirTime;
+            public int HandFrame;       // the frame its hand (its gun's grip) was last drawn at Hand
+            public Vector3 Hand;
+            public float HandSize;
+            public bool HandOnScreen;   // through its eyes: the gun's the viewmodel
         }
 
         public GhostRenderer(Camera cam, Transform root)
@@ -278,6 +282,10 @@ namespace UltraAttempts.Replay
         // through walls. pov: the camera is inside its head (only its weapon shows, as in first person).
         public void DrawGhost(Ghost g, in Ghost.Pose p, float alpha, bool featured, bool pov, bool weapons)
         {
+            if (pov)
+            {
+                SetHand(g, p.Eye, 1f, onScreen: true);
+            }
             if (!Models)
             {
                 DrawCrystal(g, p, alpha, featured, pov, weapons);
@@ -428,6 +436,30 @@ namespace UltraAttempts.Replay
                 Array.Resize(ref tracks, Mathf.Max(i + 1, tracks.Length * 2));
             }
             return ref tracks[i];
+        }
+
+        private void SetHand(Ghost g, Vector3 hand, float size, bool onScreen)
+        {
+            ref Track track = ref TrackOf(g);
+            track.HandFrame = frame;
+            track.Hand = hand;
+            track.HandSize = size;
+            track.HandOnScreen = onScreen;
+        }
+
+        // Where a shot comes out of its gun: the end of the barrel, held where it was drawn last frame, pointing
+        // where it looked; through its eyes (or not drawn of late), where the game's viewmodel fires from.
+        public Vector3 Muzzle(Ghost g, int sample, Vector3 eye, Quaternion look)
+        {
+            ref Track track = ref TrackOf(g);
+            if (track.HandFrame != frame || track.HandOnScreen)
+            {
+                return eye + look * new Vector3(0.42f, -0.3f, 0.9f);
+            }
+            Ghost.WeaponChange w = g.WeaponAt(sample);
+            WeaponModel model = guns.Get(g.WeaponName(w), w.Variant);
+            float reach = (model != null ? model.Reach : 0.7f) * track.HandSize;
+            return track.Hand + look * new Vector3(0f, 0f, reach);
         }
 
         private static Vector3 Flat(Vector3 v, Vector3 up)
@@ -676,6 +708,7 @@ namespace UltraAttempts.Replay
             if (pup.Weapons)
             {
                 Vector3 hand = pup.Hand != null ? pup.Hand.position : pup.Bottom + pup.Rotation * (kit.Hands[pup.PoseIndex] * pup.Height);
+                SetHand(pup.Ghost, hand, pup.Size, onScreen: false);
                 DrawHeld(pup.Ghost, pup.Pose.Sample, hand, pup.Pose.Look, pup.Size, pup.Featured ? 1f : pup.Alpha, ghost, real: pup.Featured, parts: true);
             }
         }
@@ -717,7 +750,9 @@ namespace UltraAttempts.Replay
             }
             if (e.Weapons)
             {
-                DrawHeld(e.G, e.P.Sample, m.MultiplyPoint3x4(kit.Hands[pose]), e.P.Look, e.Height / ReferenceHeight, e.Alpha, ghost, real: false, parts: false);
+                Vector3 hand = m.MultiplyPoint3x4(kit.Hands[pose]);
+                SetHand(e.G, hand, e.Height / ReferenceHeight, onScreen: false);
+                DrawHeld(e.G, e.P.Sample, hand, e.P.Look, e.Height / ReferenceHeight, e.Alpha, ghost, real: false, parts: false);
             }
         }
 
@@ -830,7 +865,9 @@ namespace UltraAttempts.Replay
                 }
                 else
                 {
-                    DrawHeld(g, p.Sample, p.Eye + p.Look * new Vector3(0.42f, -0.3f, 0.3f), p.Look, 1f, alpha, mat, real: false, parts: featured);
+                    Vector3 hand = p.Eye + p.Look * new Vector3(0.42f, -0.3f, 0.3f);
+                    SetHand(g, hand, 1f, onScreen: false);
+                    DrawHeld(g, p.Sample, hand, p.Look, 1f, alpha, mat, real: false, parts: featured);
                 }
             }
         }
@@ -855,14 +892,23 @@ namespace UltraAttempts.Replay
             {
                 return;
             }
-            var random = new System.Random(g.Number * 7919 + g.Order);
+            // (the same scatter every frame for the same attempt, without making a Random each frame)
+            uint seed = unchecked((uint)(g.Number * 7919 + g.Order) * 2654435761u) | 1u;
             for (int i = 0; i < 7; i++)
             {
-                var dir = new Vector3((float)random.NextDouble() * 2f - 1f, (float)random.NextDouble() * 1.6f - 0.4f, (float)random.NextDouble() * 2f - 1f).normalized;
+                var dir = new Vector3(Next(ref seed) * 2f - 1f, Next(ref seed) * 1.6f - 0.4f, Next(ref seed) * 2f - 1f).normalized;
                 Vector3 pos = at + dir * (ease * (finish ? 7f : 4.5f));
                 Quaternion spin = Quaternion.LookRotation(dir) * Quaternion.Euler(age * 720f, age * 540f, 0f);
                 Draw(cube, Matrix4x4.TRS(pos, spin, Vector3.one * (0.3f * (1f - k))), new Color(c.r, c.g, c.b, (1f - k) * 0.9f), ghost);
             }
+        }
+
+        private static float Next(ref uint seed)
+        {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            return seed / 4294967296f;
         }
 
         // Every death's marker, built once; only the first `shown` (deaths so far, in order) are drawn.
