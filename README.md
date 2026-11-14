@@ -2,7 +2,7 @@
 
 Every attempt at an ULTRAKILL level, played back at once, like Geometry Dash's attempt replays. A BepInEx 5 plugin.
 
-It records each attempt as you play a level. An attempt runs from the level's start (or a checkpoint) until you die, restart or reach the final pit. When you finally beat the level, every attempt plays at the same moment as see-through ghosts. A thousand V1s set off together, pop one by one where they died, and the last one standing is the run that made it.
+It records each attempt as you play a level. An attempt runs from the level's start (or a checkpoint) until you die, restart or reach the final pit. When you finally beat the level, every attempt plays at the same moment as ghost V1s: the game's own V1 model, animated, holding the weapon you had. A thousand V1s set off together, pop one by one where they died, and the last one standing is the run that made it. Follow any one of them, through its eyes or from behind, and you see what it saw: its enemies fighting it, its doors opening.
 
 - **Recording isn't a cheat.** It only watches: nothing in the game changes, ranks and leaderboards still count, and it needs no cheat menu. It's always on (it can be turned off in the config).
 - **Watching is.** Mid-level, the replay is in ULTRAKILL's cheat menu (it freezes the level while it plays). After you beat a level it's over, so no cheats are needed: by default every attempt plays as you continue from the results screen, before the next level loads.
@@ -45,11 +45,35 @@ As with any of ULTRAKILL's cheats, turning cheats on mid-level means that level 
 | **H** | Hide the HUD |
 | **Esc** / **Backspace** | Leave |
 
-The HUD shows how many attempts are alive, dead and finished, and a timeline with the deaths piled up where they happened. For the attempt you're following it shows its number, when it dies (or its time, for the win), its HP and its weapon.
+The HUD shows how many attempts are alive, dead and finished, and a timeline with the deaths piled up where they happened. For the attempt you're following it shows:
+- its number
+- when it dies, or its time for the win
+- when it was played ("13 NOV 18:42"), and "DAY 3" if the run took more than a day
+- its HP, its weapon and how many enemies it has killed so far
+
+Through an attempt's eyes the camera is smooth. It follows a curve through the recording, averaged over a short window, so slides, dashes and flicks don't jitter. Cuts and seeks stay sharp.
 
 ### What the ghosts show
 
-Each attempt is a see-through V1 (a crystal body with a visor), in its own colour. The winner is gold, and the attempt you were on when you opened the replay is white. Each ghost is the size V1 really is, slides and dashes where you did, and looks where you looked. With weapons recorded (on by default) it also holds the weapon you had, in its variant's colour (blue, green, red, gold), shows a tracer for every shot (up to where it hit the level), and throws its punches. Where an attempt died it bursts, and a red marker stays (M hides them). The winner leaves a gold trail.
+Each attempt is V1: the third-person V1 from the platformer secret level, at V1's real size and animated from what you did. It runs, jumps, falls, slides and dashes where you did, faces where you headed, and holds your real weapon in its hand, in its variant's colours. Through a ghost's eyes, that weapon sits bottom right like the game's own view.
+- **The attempt you follow and the winner** look like the real V1, with a glow and an outline in their colour, and you can see them through walls.
+- **The rest of the crowd** are see-through and tinted in their own colour. The winner is gold, and the attempt you were on when you opened the replay is white.
+- **The 24 nearest** are fully animated (**AnimatedGhosts**). Everyone else uses V1 posed in 13 ways (a run cycle, jump, fall, slide, dash), so a crowd of a thousand still moves like V1s and stays fast.
+
+Each ghost shows a tracer for every shot (up to where it hit the level) and throws its punches. It flashes red when hurt. Where an attempt died it bursts, and a red marker stays (M hides them). The winner leaves a gold trail.
+
+If V1's model can't be loaded, the ghosts are V2 instead, and if that fails too, the plain crystals from 1.0. **GhostModel** can also pick them. `BepInEx\LogOutput.log` says which it used.
+
+### What the followed attempt shows
+
+Following an attempt (next to die, best run, or Q/E) shows its world as it was:
+- **Its enemies:** the real enemy models, animated, where they were, taking its hits and dying when it killed them.
+- **Its doors:** opening and closing when they did for it.
+- **The level's own enemies,** frozen where the replay stopped them, hide meanwhile.
+
+In the overview and free cam, the winner's world shows. Everything goes back exactly as it was when the replay ends.
+
+With **WorldDetail** = Everything (the default), each attempt also records everything else that moves: projectiles, coins, rockets, cannonballs, nails, explosions, beams, physics props, gibs and moving platforms. Every other attempt's world then plays at the same time, see-through in that attempt's colour, so all your attempts' fights happen on top of each other (**OverlayWorlds**, **OverlayOpacity**).
 
 ULTRAKILL switches rooms off behind doors that close behind you. While a replay plays, those rooms come back (as if you'd walked back through the door), so earlier attempts aren't running through nothing. They switch off again after.
 
@@ -65,11 +89,28 @@ What a replay shows (**Replay Attempts**):
 
 Every attempt starts at the same moment in the replay: from the level's start, or from the checkpoint it respawned at.
 
+A run can take days. It carries on across game launches until the level is beaten, and attempts recorded by 1.0 carry on too. The replay shows which day each attempt was, and how many days the whole run took.
+
 ## How it's recorded
 
-At 30 samples a second of game time (so pausing and hitstops take no room), interpolated between frames. Each sample holds V1's position, where the eyes are, where they look, HP, movement (on the ground, sliding, dashing), shots and punches, and weapon switches as events.
+At 60 samples a second of game time (so pausing and hitstops take no room), read each frame right after the game's camera has moved. Each sample holds:
+- V1's position
+- where the eyes are and where they look, without ULTRAKILL's screen shake (it shakes every frame you slide, and up to a metre on shotgun blasts and slams), so seeing through an attempt's eyes is steady
+- HP, movement (on the ground, sliding, dashing), shots and punches
+- weapon switches and gravity changes, as events
 
-Recordings are kept small. Each channel (positions, rotations, ...) is stored on its own. Positions and rotations are stored as the difference from where the two samples before predict them to be: moving at a steady speed or turning at a steady rate leaves nothing to store. Everything goes in as zigzag varints, and the whole attempt is deflated. A minute of non-stop movement is about 11 KB (about 190 bytes a second), and a minute of standing still is under 100 bytes. A run is one file, written on a background thread as each attempt ends, so dying never hitches the game. A crash can't corrupt a run: half-written attempts are cut off.
+Recordings from 1.0 had the shake in them; the replay takes it out of those (about 25 cm of jitter per sample down to 4 on real runs).
+
+With **WorldDetail** above Off, each attempt also records:
+- each enemy around (where it is, which way it faces, its animation, its health, when it dies)
+- every door's state at the start, then each open and close
+
+With Everything, it also records whatever else moves (see above).
+
+Recordings are kept small. Each channel (positions, rotations, ...) is stored on its own. Positions and rotations are stored as the difference from where the two samples before predict them to be: moving at a steady speed or turning at a steady rate leaves nothing to store. Everything goes in as zigzag varints, and the whole attempt is deflated.
+- **Non-stop movement:** about 14 KB a minute at 60 Hz.
+- **With 10 enemies around and 30 doors:** about 32 KB a minute.
+- **Standing still next to an idling enemy:** about 200 bytes a minute. A run is one file, written on a background thread as each attempt ends, so dying never hitches the game. A crash can't corrupt a run: half-written attempts are cut off.
 
 Recordings go in `BepInEx\UltraAttempts\<level>\<difficulty>\`, one `.ukattempts` file per run. The newest 30 finished runs of each level are kept.
 
@@ -80,8 +121,9 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Setting | Default | |
 |---|---|---|
 | Recording / Enabled | true | Record attempts at all. |
-| Recording / SampleRate | 30 | Samples per second (10-60). |
+| Recording / SampleRate | 60 | Samples per second (10-60). (A config from 1.0 that still says 30 moves to 60 once.) |
 | Recording / RecordWeapons | true | Record the weapon, shots and punches too. |
+| Recording / WorldDetail | Everything | Off (only V1), Enemies (enemies and doors), Everything (whatever moves: much bigger recordings). |
 | Recording / ContinueRunsAcrossVisits | true | Leaving a level keeps its run going (off: every visit is a new run). |
 | Recording / KeepRunsPerLevel | 30 | Finished runs kept per level and difficulty (0: all). |
 | Recording / ShowAttemptCounter | true | "ATTEMPT 37" at the start of each attempt. |
@@ -96,6 +138,12 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Replay / Sounds, Volume | true, 0.6 | A pop for each death, a chime for the win. |
 | Replay / GhostOpacity | 0.35 | How solid the ghosts are. |
 | Replay / GhostColors | Rainbow | Rainbow, or Progress (red for the first attempts to green for the last). |
+| Replay / GhostModel | V1 | V1, V2 or Crystal (V1 falls back to V2, V2 to Crystal). |
+| Replay / AnimatedGhosts | 24 | How many ghosts are fully animated at once (the rest use pre-posed V1s). |
+| Replay / ShowWorld | true | Show the followed attempt's enemies and doors (the level's own enemies hide meanwhile). |
+| Replay / OverlayWorlds, OverlayOpacity | true, 0.18 | With Everything: every other attempt's world too, see-through in its colour. |
+| Replay / CameraSmoothing | 0.05 | Seconds of smoothing on the eyes camera (0: exactly as recorded). |
+| Replay / CameraShake | false | Through an attempt's eyes: shake when it gets hurt, as the game does. |
 | Replay / MaxGhosts | 2000 | Most attempts in one replay (the newest, plus every win). |
 | Replay / MinShotSeconds | 0.75 | Next-to-die camera: the shortest a shot lasts. |
 | Replay / RevealRooms | true | Bring back rooms switched off behind doors while a replay plays. |
@@ -126,7 +174,8 @@ If ULTRAKILL isn't in `D:\SteamLibrary\steamapps\common\ULTRAKILL` or `C:\Progra
 Tests (no game needed for the first):
 
 ```
-dotnet run -c Release --project tests\RecordingTests   # the recording format: exact round trips, runs, crashes, pruning, sizes
+dotnet run -c Release --project tests\RecordingTests   # the recording format: exact round trips, old versions, damage, runs, crashes, pruning, sizes
+dotnet run -c Release --project tests\RecordingTests -- "<a copy of BepInEx\UltraAttempts>"   # every real run decodes; how shaky its eyes are
 dotnet run -c Release --project tests\PatchCheck       # every hook into ULTRAKILL finds its method in the real game
 ```
 
@@ -146,11 +195,20 @@ ULTRAKILL starts in a window and plays itself for a few minutes:
 It saves screenshots and `selftest.log` into `tests/InGameTest/out`, then quits. Your saves, preferences and window settings are backed up first and put back exactly after, and the test's recordings stay out of yours.
 
 The code:
-- `src/Recording`: `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit). `RawAttempt.cs` is an attempt's samples. `AttemptCodec.cs` packs them. `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
-- `src/Replay`: `ReplayDirector.cs` freezes the level, loads the attempts on a background task, runs the clock, the cameras and the controls, then puts everything back. `GhostRenderer.cs` draws the ghosts, bursts, markers, tracers and trails, from meshes made in code, onto ULTRAKILL's camera (so they get its pixelation and palette). `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
+- `src/Recording`:
+  - `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit).
+  - `WorldRecorder.cs` records the enemies, doors and everything else.
+  - `RawAttempt.cs` is an attempt's samples, and `AttemptCodec.cs` packs them.
+  - `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
+- `src/Replay`:
+  - `ReplayDirector.cs` freezes the level, loads the attempts on a background task, runs the clock, the cameras and the controls, then puts everything back. `Ghost.cs` is one attempt ready to play: smooth curves through its samples, its world.
+  - `GhostRenderer.cs`, `GhostModels.cs` and `WeaponModels.cs` draw the V1 ghosts, their weapons, bursts, markers, tracers and trails onto ULTRAKILL's camera, so they get its pixelation and palette.
+  - `WorldPlayback.cs` plays the followed attempt's enemies and doors.
+  - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
+  - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:
-  - Scene loads, restarts and the results screen (recording).
-  - The camera, Escape and the results screen's continue (the replay).
+  - Recording: scene loads, restarts, the results screen, the camera, and doors opening and closing.
+  - The replay: the camera, Escape, and the results screen's continue.
   - Doors switching rooms off.
 
 ## Credits
