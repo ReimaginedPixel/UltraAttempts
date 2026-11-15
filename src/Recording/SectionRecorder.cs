@@ -500,7 +500,15 @@ namespace UltraAttempts.Recording
             {
                 foreach (FieldInfo f in Fields(owner.GetType()))
                 {
-                    object value = f.GetValue(owner);
+                    object value;
+                    try
+                    {
+                        value = f.GetValue(owner);
+                    }
+                    catch (Exception)
+                    {
+                        continue;  // (nothing to learn from it)
+                    }
                     if (value != null)
                     {
                         Take(value, into, depth);
@@ -589,16 +597,23 @@ namespace UltraAttempts.Recording
                 }
                 fieldsOf[type] = Array.Empty<FieldInfo>();  // (a type that holds itself stops here)
                 var fields = new List<FieldInfo>();
-                for (Type t = type; t != null && t != typeof(MonoBehaviour) && t != typeof(object); t = t.BaseType)
+                try
                 {
-                    foreach (FieldInfo f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                    for (Type t = type; t != null && t != typeof(MonoBehaviour) && t != typeof(object); t = t.BaseType)
                     {
-                        bool serialized = (f.IsPublic && !f.IsNotSerialized) || f.IsDefined(typeof(SerializeField), false);
-                        if (serialized && !f.IsInitOnly && Wanted(f))
+                        foreach (FieldInfo f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                         {
-                            fields.Add(f);
+                            bool serialized = (f.IsPublic && !f.IsNotSerialized) || f.IsDefined(typeof(SerializeField), false);
+                            if (serialized && !f.IsInitOnly && Wanted(f))
+                            {
+                                fields.Add(f);
+                            }
                         }
                     }
+                }
+                catch (Exception)
+                {
+                    return fieldsOf[type] = Array.Empty<FieldInfo>();  // (a type that can't be read: one of another mod's, missing what it needs)
                 }
                 FieldInfo[] found = fields.ToArray();
                 fieldsOf[type] = found;

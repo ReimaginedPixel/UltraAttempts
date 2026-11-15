@@ -785,12 +785,8 @@ namespace UltraAttempts.Replay
             // Static batching put the original's mesh into a combined one (Unity's "Combined Mesh (root: scene)", or the
             // one ULTRAKILL's StaticSceneOptimizer bakes and points each renderer at), where it's already in place; a
             // renderer draws its submeshes of it. A copy keeps them (Instantiate copies the batch info), else it's set up
-            // again, else drawn by hand. Its bounds are the original's: worked out from its own transform they'd be the
-            // whole combined mesh's, moved (the optimizer sets the originals' the same way).
-            if (BatchBounds(om, out Bounds bounds))
-            {
-                rm.bounds = bounds;
-            }
+            // again, else drawn by hand. Then its bounds are the original's: worked out from its own transform they'd be
+            // the whole combined mesh's, moved (the optimizer sets the originals' the same way, after their batch).
             if (SameBatch(om, rm))
             {
                 batchedKept++;
@@ -807,6 +803,11 @@ namespace UltraAttempts.Replay
                     ByHand(c, om, rm);
                 }
                 batchedDrawn++;
+                return;
+            }
+            if (BatchBounds(om, out Bounds bounds))
+            {
+                rm.bounds = bounds;
             }
         }
 
