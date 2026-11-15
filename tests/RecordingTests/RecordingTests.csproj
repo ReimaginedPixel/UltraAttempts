@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="..\..\src\Recording\RawAttempt.cs" Link="Recording\RawAttempt.cs" />
     <Compile Include="..\..\src\Recording\AttemptCodec.cs" Link="Recording\AttemptCodec.cs" />
+    <Compile Include="..\..\src\Recording\Blocks\*.cs" LinkBase="Recording\Blocks" />
     <Compile Include="..\..\src\Recording\SessionFile.cs" Link="Recording\SessionFile.cs" />
     <Compile Include="..\..\src\Recording\SessionStore.cs" Link="Recording\SessionStore.cs" />
   </ItemGroup>

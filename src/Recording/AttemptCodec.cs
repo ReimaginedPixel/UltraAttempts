@@ -16,11 +16,13 @@ namespace UltraAttempts.Recording
     // Everything): the things that moved, what they looked like, and the explosions, beams and breaks. Version 4
     // adds the game's own sounds (Recording.RecordSounds) right after the events, before the world: they're kept
     // with the attempt (a replay plays every attempt's), not with its world (which a replay lets go of and reads
-    // again), so they read even without the world. Versions 1 (UltraAttempts 1.0, no world), 2 (no things) and 3
-    // (no sounds) still read.
+    // again), so they read even without the world. Version 5 adds blocks (AttemptBlocks): each feature's own data,
+    // tagged and sized, so a version that doesn't know one steps over it. The attempt's blocks come right after the
+    // sounds (read with or without the world), the world's after the things. Versions 1 (UltraAttempts 1.0, no
+    // world), 2 (no things), 3 (no sounds) and 4 (no blocks) still read.
     public static class AttemptCodec
     {
-        public const byte Version = 4;
+        public const byte Version = 5;
 
         public static byte[] Encode(RawAttempt a)
         {
@@ -78,8 +80,10 @@ namespace UltraAttempts.Recording
             }
 
             EncodeSounds(w, a);
+            AttemptBlocks.Encode(w, a, world: false);
             EncodeWorld(w, a);
             EncodeThings(w, a);
+            AttemptBlocks.Encode(w, a, world: true);
 
             using (var output = new MemoryStream(w.Length / 2 + 16))
             {
@@ -165,12 +169,20 @@ namespace UltraAttempts.Recording
             {
                 DecodeSounds(r, a);
             }
+            if (version >= 5)
+            {
+                AttemptBlocks.Decode(r, a, world: false);
+            }
             if (version >= 2 && world)
             {
                 DecodeWorld(r, a);
                 if (version >= 3)
                 {
                     DecodeThings(r, a);
+                }
+                if (version >= 5)
+                {
+                    AttemptBlocks.Decode(r, a, world: true);
                 }
             }
             return a;
@@ -849,7 +861,7 @@ namespace UltraAttempts.Recording
         // +-10^8 cm by the recorder, so none of this overflows.
         private static int Prediction(int i, int previous, int beforeThat) => i == 0 ? 0 : i == 1 ? previous : 2 * previous - beforeThat;
 
-        private static void Predicted(VarWriter w, int[] values, int n)
+        internal static void Predicted(VarWriter w, int[] values, int n)
         {
             for (int i = 0; i < n; i++)
             {
@@ -857,7 +869,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Predicted(VarWriter w, short[] values, int n)
+        internal static void Predicted(VarWriter w, short[] values, int n)
         {
             for (int i = 0; i < n; i++)
             {
@@ -865,7 +877,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Unpredicted(VarReader r, int[] values, int n)
+        internal static void Unpredicted(VarReader r, int[] values, int n)
         {
             for (int i = 0; i < n; i++)
             {
@@ -873,14 +885,14 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Unpredicted(VarReader r, short[] values, int n)
+        internal static void Unpredicted(VarReader r, short[] values, int n)
         {
             for (int i = 0; i < n; i++)
             {
                 values[i] = (short)(r.Int() + Prediction(i, i > 0 ? values[i - 1] : 0, i > 1 ? values[i - 2] : 0));
             }
         }
-        private static void Deltas(VarWriter w, short[] values, int n)
+        internal static void Deltas(VarWriter w, short[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -890,7 +902,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Undeltas(VarReader r, short[] values, int n)
+        internal static void Undeltas(VarReader r, short[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -901,7 +913,7 @@ namespace UltraAttempts.Recording
         }
 
         // Animation hashes: the same one for a while, then any other (wrapping around is fine both ways).
-        private static void Deltas(VarWriter w, int[] values, int n)
+        internal static void Deltas(VarWriter w, int[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -911,7 +923,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Undeltas(VarReader r, int[] values, int n)
+        internal static void Undeltas(VarReader r, int[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -922,7 +934,7 @@ namespace UltraAttempts.Recording
         }
 
         // Animation times: a looping one goes from 65535 round to 0, so the step is taken modulo 65536.
-        private static void Deltas(VarWriter w, ushort[] values, int n)
+        internal static void Deltas(VarWriter w, ushort[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -932,7 +944,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Undeltas(VarReader r, ushort[] values, int n)
+        internal static void Undeltas(VarReader r, ushort[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -942,7 +954,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Deltas(VarWriter w, byte[] values, int n)
+        internal static void Deltas(VarWriter w, byte[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -952,7 +964,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private static void Undeltas(VarReader r, byte[] values, int n)
+        internal static void Undeltas(VarReader r, byte[] values, int n)
         {
             int last = 0;
             for (int i = 0; i < n; i++)
@@ -962,7 +974,7 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private sealed class VarWriter
+        internal sealed class VarWriter
         {
             public byte[] Buffer;
             public int Length;
@@ -1034,24 +1046,41 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private sealed class VarReader
+        internal sealed class VarReader
         {
             private readonly byte[] buffer;
             private int position;
+            private readonly int end;
 
-            public VarReader(byte[] buffer)
+            public VarReader(byte[] buffer) : this(buffer, 0, buffer.Length)
             {
-                this.buffer = buffer;
             }
 
-            public int Remaining => buffer.Length - position;
+            // Just buffer[start..end) (a block: its decoder can't read past it).
+            public VarReader(byte[] buffer, int start, int end)
+            {
+                this.buffer = buffer;
+                position = start;
+                this.end = end;
+            }
+
+            public int Remaining => end - position;
 
             private void Need(int count)
             {
-                if (position + count > buffer.Length)
+                if (count < 0 || position + count > end)
                 {
                     throw new EndOfStreamException("attempt data is cut short");
                 }
+            }
+
+            // The next length bytes as a reader of their own; this one steps over them.
+            public VarReader Slice(int length)
+            {
+                Need(length);
+                var slice = new VarReader(buffer, position, position + length);
+                position += length;
+                return slice;
             }
 
             // How many of something follow, each at least minBytes long: more than the data could hold

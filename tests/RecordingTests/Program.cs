@@ -35,6 +35,7 @@ internal static class Program
         {
             Codec();
             Details();
+            Blocks();
             OldAttempts();
             Damage();
             Compression();
@@ -785,6 +786,36 @@ internal static class Program
         Check(doors.Count == 3 && (DoorDetail)doors[0].C == (DoorDetail.Recorded | DoorDetail.AsFound) && (DoorDetail)doors[1].C == DoorDetail.None
             && (DoorDetail)doors[2].C == (DoorDetail.Recorded | DoorDetail.Reversed) && doors[2].B == 1 && doors[2].Sample == 20,
             "doors: found shut at the start, one from an older recording (nothing known), opened from the other side");
+    }
+
+    // Format 5's blocks: one a later version adds (a tag this one doesn't know), in the attempt's group and the
+    // world's, is stepped over; everything around it still reads, with or without the world.
+    private static void Blocks()
+    {
+        Console.WriteLine("blocks");
+        RawAttempt a = Sample(11, 300, 11);
+        var future = new[]
+        {
+            new AttemptBlocks.Block { Tag = 9001, World = false, Has = _ => true, Encode = (w, _) => { w.UInt(123456); w.String("from a later version"); w.Long(-1); }, Decode = (r, _) => throw new InvalidDataException("not this one's") },
+            new AttemptBlocks.Block { Tag = 9002, World = true, Has = _ => true, Encode = (w, _) => { for (int i = 0; i < 1000; i++) w.Int(-i); }, Decode = (r, _) => throw new InvalidDataException("not this one's") },
+        };
+        AttemptBlocks.All.AddRange(future);
+        byte[] bytes;
+        try
+        {
+            bytes = AttemptCodec.Encode(a);
+        }
+        finally
+        {
+            foreach (AttemptBlocks.Block b in future)
+            {
+                AttemptBlocks.All.Remove(b);
+            }
+        }
+        Check(Same(a, AttemptCodec.Decode(bytes, 0, bytes.Length)), "an attempt with blocks this version doesn't know reads exactly, stepping over them");
+        RawAttempt bare = AttemptCodec.Decode(bytes, 0, bytes.Length, world: false);
+        Check(bare.Count == a.Count && bare.Things.Count == 0 && bare.Sounds.Count == a.Sounds.Count, "...and without its world");
+        Check(AttemptBlocks.All.Select(b => b.Tag).Distinct().Count() == AttemptBlocks.All.Count, "every block has a tag of its own");
     }
 
     // An attempt recorded by UltraAttempts 1.0: format 1, written by its own encoder (commit bf1d01f)

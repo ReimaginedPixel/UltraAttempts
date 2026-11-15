@@ -223,6 +223,10 @@ namespace UltraAttempts.Replay
                 for (int i = 0; i < copies.Count; i++)
                 {
                     Renderer r = copies[i];
+                    if (!r.enabled && i < originals.Count && copies.Count == originals.Count && FirstPersonView.HidByReplay(originals[i]))
+                    {
+                        r.enabled = true;  // (switched off by the replay's first person view, not by the game)
+                    }
                     if (!r.enabled || !r.gameObject.activeInHierarchy || Effect(r.name))
                     {
                         continue;

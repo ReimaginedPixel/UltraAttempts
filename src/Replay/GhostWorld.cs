@@ -9,7 +9,7 @@ namespace UltraAttempts.Replay
     // One attempt's world, decoded and ready to play: the enemies it met, the things it saw move, what they
     // looked like, the explosions, beams and breaks. Decoded off the main thread (only plain maths here), kept
     // by the WorldCache while it's needed, and read again from its run file when it's wanted after that.
-    internal sealed class GhostWorld
+    internal sealed partial class GhostWorld
     {
         public EnemyPath[] Enemies = Array.Empty<EnemyPath>();
         public ThingPath[] Things = Array.Empty<ThingPath>();       // by when they show up

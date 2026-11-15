@@ -27,6 +27,7 @@ namespace UltraAttempts.Replay
         private bool liveHidden;
         private bool hudCamWasEnabled;
         private readonly List<Renderer> hiddenRenderers = new List<Renderer>();
+        private static readonly HashSet<Renderer> hiddenNow = new HashSet<Renderer>();
         private readonly List<Canvas> hiddenCanvases = new List<Canvas>();
         private readonly List<Canvas> hiddenHudSources = new List<Canvas>();
 
@@ -34,6 +35,9 @@ namespace UltraAttempts.Replay
         private float lastT;
         private bool wasActive;
         private bool weaponsShown;
+
+        // One of your own renderers this switched off while it shows (a copy made of it now is off too: it isn't really).
+        public static bool HidByReplay(Renderer r) => r != null && hiddenNow.Contains(r);
 
         // The game-style HUD is on screen (the replay's own overlay makes room for it).
         public bool HudShown { get; private set; }
@@ -292,6 +296,7 @@ namespace UltraAttempts.Replay
                         {
                             r.enabled = false;
                             hiddenRenderers.Add(r);
+                            hiddenNow.Add(r);
                         }
                     }
                 }
@@ -324,6 +329,7 @@ namespace UltraAttempts.Replay
                 }
             }
             hiddenRenderers.Clear();
+            hiddenNow.Clear();
             foreach (Canvas c in hiddenCanvases)
             {
                 if (c != null)

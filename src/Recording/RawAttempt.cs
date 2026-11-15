@@ -347,8 +347,9 @@ namespace UltraAttempts.Recording
 
     // One attempt as recorded: fixed-rate samples, already quantized (centimetres, rotation * 32767),
     // kept as one array per channel (which is also how they're stored, for compression). Sample i is
-    // at i / SampleRate seconds into the attempt.
-    public sealed class RawAttempt
+    // at i / SampleRate seconds into the attempt. Format 5's blocks keep their own parts of it in their own
+    // files (Blocks/), each with its own part of Clone.
+    public sealed partial class RawAttempt
     {
         public const float RotationScale = 32767f;
 
@@ -505,8 +506,16 @@ namespace UltraAttempts.Recording
             copy.Sounds = new List<SoundEvent>(Sounds);
             copy.SoundMoves = new List<SoundMove>(SoundMoves);
             copy.SourcePath = null;
+            CloneArms(copy);
+            CloneSections(copy);
+            CloneEffects(copy);
             return copy;
         }
+
+        // (each block's lists copied for a Clone: see Blocks/)
+        partial void CloneArms(RawAttempt copy);
+        partial void CloneSections(RawAttempt copy);
+        partial void CloneEffects(RawAttempt copy);
 
         private T[] Trim<T>(T[] array)
         {

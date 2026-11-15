@@ -7,7 +7,7 @@ namespace UltraAttempts.Replay
 {
     // One attempt, ready to play: positions in metres, rotations as quaternions. Every attempt starts at
     // replay time 0 (from the level's start or its checkpoint), like Geometry Dash's attempts.
-    internal sealed class Ghost
+    internal sealed partial class Ghost
     {
         public int Number;          // what the HUD calls it ("ATTEMPT 512")
         public int Order;           // 0..count-1, oldest first (colours)
