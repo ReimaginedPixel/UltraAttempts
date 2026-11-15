@@ -69,12 +69,16 @@ namespace UltraAttempts.Recording
         // Everything else (WorldDetail = Everything): projectiles, props, movers, explosions, beams.
         public ThingRecorder Things { get; } = new ThingRecorder();
 
+        // Which parts of the level are switched on (whenever the world is recorded).
+        public SectionRecorder Sections { get; } = new SectionRecorder();
+
         // A new scene: nothing from the last one carries over.
         public void EnterScene()
         {
             End();
             doorPaths.Clear();
             Things.EnterScene();
+            Sections.EnterScene();
         }
 
         // An attempt starts, with as much of its world as asked for (Off: none).
@@ -83,6 +87,7 @@ namespace UltraAttempts.Recording
             End();
             bool record = detail != WorldDetail.Off;
             Things.Begin(a, detail == WorldDetail.Everything);
+            Sections.Begin(a, record);
             attempt = record ? a : null;
             failed = false;
             nextId = 0;
@@ -124,6 +129,7 @@ namespace UltraAttempts.Recording
             doors.Clear();
             attempt = null;
             Things.End();
+            Sections.End();
         }
 
         // Once a frame, before its samples: how each tracked enemy (and thing) is now.
@@ -156,6 +162,7 @@ namespace UltraAttempts.Recording
         public void Tick(int sample, float between)
         {
             Things.Tick(sample, between);
+            Sections.Tick(sample);
             if (attempt == null || failed)
             {
                 return;

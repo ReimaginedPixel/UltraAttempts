@@ -444,6 +444,10 @@ namespace UltraAttempts.Recording
                 Plugin.Log.LogInfo("...and everything else (WorldDetail = Everything): " + Everything(a));
             }
             Plugin.Log.LogInfo("...and its sounds (RecordSounds): " + sounds.Summary(a));
+            if (Settings.World.Value != WorldDetail.Off)
+            {
+                Plugin.Log.LogInfo("...and the level's parts switched on and off: " + world.Sections.Summary(a));
+            }
         }
 
         // What an attempt recorded besides V1 and its enemies, for the log.

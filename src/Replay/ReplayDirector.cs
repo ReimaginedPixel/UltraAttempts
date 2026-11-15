@@ -160,7 +160,7 @@ namespace UltraAttempts.Replay
         private bool hudCamWasEnabled;
         private Canvas hiddenCanvas;
         private bool hiddenCanvasWasEnabled;
-        private List<GameObject> revealed;
+        private SectionPlayback sections;   // the level's parts as the attempt shown had them
         private int environment;
 
         private sealed class LoadResult
@@ -347,7 +347,7 @@ namespace UltraAttempts.Replay
                     hiddenCanvas.enabled = false;
                 }
             }
-            revealed = Settings.RevealRooms.Value ? RoomReveal.Reveal() : null;
+            sections = Settings.RevealRooms.Value ? new SectionPlayback(cc.cam, root.transform) : null;
             Freeze();
 
             environment = LayerMaskDefaults.Get(LMD.Environment);
@@ -464,10 +464,9 @@ namespace UltraAttempts.Replay
             // (before the HUD camera goes back: it puts back your gun and HUD as it found them)
             firstPersonView?.Dispose();
             firstPersonView = null;
+            DropSections();
             try
             {
-                RoomReveal.Hide(revealed);
-                revealed = null;
                 if (hudCam != null)
                 {
                     hudCam.enabled = hudCamWasEnabled;
@@ -876,7 +875,7 @@ namespace UltraAttempts.Replay
 
             if (State == Phase.Loading)
             {
-                if (loading != null && loading.IsCompleted)
+                if (loading != null && loading.IsCompleted && SectionsReady(loading.Result))
                 {
                     Loaded(loading.Result);
                 }
@@ -1690,6 +1689,7 @@ namespace UltraAttempts.Replay
             Ghost shown = Following ? Follow : Best;
             GhostWorld shownWorld = cache?.Get(shown);
             Prefetch();
+            ShowSections(shown);
             if (world != null)
             {
                 try
@@ -1842,6 +1842,59 @@ namespace UltraAttempts.Replay
         }
 
         private float FromCamera(Ghost g) => g.Index >= 0 && g.Index < poses.Length ? (poses[g.Index].Body - camPos).sqrMagnitude : float.MaxValue;
+
+        // ---------------------------------------------------------------- the level's parts
+
+        // The level's parts as the attempt shown had them (SectionPlayback). Their copies are made while the replay is
+        // still loading, a frame at a time, so a cut never waits for one.
+        private bool SectionsReady(LoadResult result)
+        {
+            if (sections == null || result.Error != null || result.Ghosts.Count == 0)
+            {
+                return true;
+            }
+            try
+            {
+                return sections.MakeAhead(result.Ghosts);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("getting the level's parts ready (left as they are this time; the ghosts still play): " + e);
+                DropSections();
+                return true;
+            }
+        }
+
+        private void ShowSections(Ghost shown)
+        {
+            if (sections == null)
+            {
+                return;
+            }
+            try
+            {
+                sections.Update(shown, t);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("showing the level's parts (left as they are for the rest of this replay; the ghosts still play): " + e);
+                DropSections();
+            }
+        }
+
+        // (puts back what it hid and drops its copies)
+        private void DropSections()
+        {
+            try
+            {
+                sections?.Dispose();
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("putting the level's parts back after a replay: " + e);
+            }
+            sections = null;
+        }
 
         // ---------------------------------------------------------------- the game's own sounds
 
