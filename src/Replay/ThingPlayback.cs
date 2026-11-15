@@ -10,7 +10,8 @@ namespace UltraAttempts.Replay
     // Everything else an attempt saw (WorldDetail = Everything). The followed one's: its projectiles, debris
     // and props in their own meshes and materials (found again among what the game has loaded), the level's
     // own movers and props moved for real (and put back), its explosions, beams and breakables breaking. The
-    // other attempts' (OverlayWorlds): the same, see-through in each attempt's colour. Dispose puts back
+    // other attempts' (OverlayWorlds): the same, see-through in each attempt's colour. The followed one's effects,
+    // projectiles and beams are the game's own copies where they can be (EffectPlayback). Dispose puts back
     // everything moved or hidden.
     internal sealed class ThingPlayback
     {
@@ -44,6 +45,7 @@ namespace UltraAttempts.Replay
         private readonly HashSet<long> explosionsSeen = new HashSet<long>();
         private readonly int[] explosionsHow = new int[4];
         private readonly HashSet<string> explosionsFlat = new HashSet<string>();
+        private EffectPlayback effects;     // (Replay.Effects; null if it's off or it failed)
 
         // A level object found again by its path: where it was before the replay moved (or hid) it.
         private sealed class Spot
@@ -60,12 +62,23 @@ namespace UltraAttempts.Replay
             public bool Door;           // a door (or a part of one): the doors' playback moves it, not this
         }
 
-        public ThingPlayback(Camera cam)
+        public ThingPlayback(Camera cam, GhostRenderer renderer = null)
         {
             this.cam = cam;
             layer = (cam.cullingMask & 1) != 0 ? 0 : FirstLayer(cam.cullingMask);
             glow = MakeMaterial(zWrite: false);
             solid = MakeMaterial(zWrite: true);
+            if (Settings.Effects.Value)
+            {
+                try
+                {
+                    effects = new EffectPlayback(cam, renderer, layer);
+                }
+                catch (Exception e)
+                {
+                    EffectsFailed(e);
+                }
+            }
         }
 
         // Once the attempts are loaded: the game's meshes and materials, by name (once, while the replay loads).
@@ -80,6 +93,14 @@ namespace UltraAttempts.Replay
             {
                 looks.Index();
             }
+            try
+            {
+                effects?.Prepare(ghosts);
+            }
+            catch (Exception e)
+            {
+                EffectsFailed(e);
+            }
         }
 
         public void Dispose()
@@ -91,6 +112,15 @@ namespace UltraAttempts.Replay
             catch (Exception e)
             {
                 Plugin.Log.LogError("putting the level's objects back after a replay: " + e);
+            }
+            if (effects != null)
+            {
+                if (effects.Asked)
+                {
+                    Plugin.Log.LogInfo("replay effects: " + effects.Summary);
+                }
+                effects.Dispose();
+                effects = null;
             }
             if (looks.Asked > 0)
             {
@@ -114,8 +144,9 @@ namespace UltraAttempts.Replay
 
         // ---------------------------------------------------------------- the followed attempt
 
-        // The things g saw, t seconds in, as they were (null: nobody's).
-        public void Update(Ghost g, GhostWorld w, float t)
+        // The things g saw, t seconds in, as they were (null: nobody's). eyes: seen through its eyes (its muzzle
+        // flashes go on the replay's camera).
+        public void Update(Ghost g, GhostWorld w, float t, bool eyes = false)
         {
             realDraws = 0;
             if (w != movedFor)
@@ -130,12 +161,24 @@ namespace UltraAttempts.Replay
                     PutBack();
                     movedFor = null;
                 }
+                Effects(e => e.Clear());
                 return;
             }
             float end = g.Duration;
             float at = Mathf.Min(t, end);
             bool moved = false;
             frame++;
+            if (effects != null)
+            {
+                try
+                {
+                    effects.Begin(g, w, t, eyes);
+                }
+                catch (Exception e)
+                {
+                    EffectsFailed(e);
+                }
+            }
             ThingPath[] things = w.Things;
             for (int i = 0; i < things.Length; i++)
             {
@@ -160,6 +203,10 @@ namespace UltraAttempts.Replay
                     }
                     continue;
                 }
+                if (there && effects != null && GameThing(i, p, pos, rot, p.BaseScale * scale, at))
+                {
+                    continue;  // (the game's own copy)
+                }
                 if (there && realDraws < MaxRealDraws)
                 {
                     realDraws += DrawLook(w, p.Look, Matrix4x4.TRS(pos, rot, p.BaseScale * scale), true, default, MaxRealDraws - realDraws);
@@ -167,6 +214,7 @@ namespace UltraAttempts.Replay
             }
             Breaks(w, t, at, null);
             Moments(w, t, null);
+            Effects(e => e.End());
             if (moved)
             {
                 Physics.SyncTransforms();  // (so the camera and the tracers meet them where they're shown)
@@ -275,6 +323,10 @@ namespace UltraAttempts.Replay
                 }
                 else if (m.Kind == WorldEventKind.Beam && age <= m.Life)
                 {
+                    if (tint == null && effects != null && GameBeam(i, m, age))
+                    {
+                        continue;  // (the game's own line)
+                    }
                     Vector3 d = m.To - m.From;
                     float length = d.magnitude;
                     if (length < 0.01f)
@@ -385,6 +437,65 @@ namespace UltraAttempts.Replay
             {
                 explosionsHow[how]++;
             }
+        }
+
+        // ---------------------------------------------------------------- the game's own copies (EffectPlayback)
+
+        private bool GameThing(int index, ThingPath p, Vector3 pos, Quaternion rot, Vector3 scale, float at)
+        {
+            try
+            {
+                return effects.Thing(index, p, pos, rot, scale, at);
+            }
+            catch (Exception e)
+            {
+                EffectsFailed(e);
+                return false;
+            }
+        }
+
+        private bool GameBeam(int index, in WorldMoment m, float age)
+        {
+            try
+            {
+                return effects.Beam(index, m, age);
+            }
+            catch (Exception e)
+            {
+                EffectsFailed(e);
+                return false;
+            }
+        }
+
+        private void Effects(Action<EffectPlayback> step)
+        {
+            if (effects == null)
+            {
+                return;
+            }
+            try
+            {
+                step(effects);
+            }
+            catch (Exception e)
+            {
+                EffectsFailed(e);
+            }
+        }
+
+        // The effects went wrong: off for the rest of this replay (the things are drawn as before), with one line.
+        private void EffectsFailed(Exception e)
+        {
+            Plugin.Log.LogError("showing the game's own effects (off for the rest of this replay; its things are still drawn): " + e);
+            try
+            {
+                effects?.Dispose();
+            }
+            catch (Exception)
+            {
+                // (as much of it as could be put away is)
+            }
+            effects = null;
         }
 
         // ---------------------------------------------------------------- the other attempts

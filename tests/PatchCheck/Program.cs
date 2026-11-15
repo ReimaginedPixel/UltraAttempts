@@ -13,9 +13,10 @@ internal static class Program
 {
     // Every hook in Patches: cheats, scene loads, restarts, results, rooms off, doors opening and
     // closing, explosions, beams (hitscan and lasting), breakables, the camera, Escape, continuing from the
-    // results screen; and the game's sounds (Play, PlayOneShot, PlayDelayed, and its virtual audio picking up
-    // the ones that play by themselves).
-    private const int Expected = 18;
+    // results screen; the game's sounds (Play, PlayOneShot, PlayDelayed, and its virtual audio picking up
+    // the ones that play by themselves); and what it makes (Unity's four non-generic Instantiates, for its
+    // effects and projectiles).
+    private const int Expected = 22;
 
     private static string game;
     private static string plugin;

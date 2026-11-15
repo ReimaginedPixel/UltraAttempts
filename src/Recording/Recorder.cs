@@ -227,6 +227,15 @@ namespace UltraAttempts.Recording
             }
         }
 
+        // The game made something (Instantiate): its effects and things are looked at once the frame's done.
+        public void OnSpawn(UnityEngine.Object original, UnityEngine.Object clone, bool replaying)
+        {
+            if (current != null && !replaying)
+            {
+                world.Things.Effects.OnSpawn(original, clone, SampleNow);
+            }
+        }
+
         // The game's own sounds (Recording.RecordSounds): one starting (delay: PlayDelayed's), or one that plays by
         // itself being picked up by the game's virtual audio.
         public void OnSound(AudioSource source, AudioClip clip, float volumeScale, float delay, SoundPath path, bool replaying)
@@ -442,6 +451,7 @@ namespace UltraAttempts.Recording
             if (Settings.World.Value == WorldDetail.Everything)
             {
                 Plugin.Log.LogInfo("...and everything else (WorldDetail = Everything): " + Everything(a));
+                Plugin.Log.LogInfo("...and its effects: " + world.Things.Effects.Summary(a));
             }
             Plugin.Log.LogInfo("...and its sounds (RecordSounds): " + sounds.Summary(a));
         }

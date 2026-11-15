@@ -87,6 +87,7 @@ namespace UltraAttempts.Replay
                 w.Breaks = InOrder(breaks);
                 w.Weight += moments.Count + breaks.Count;
             }
+            w.FillEffects(raw, rate);  // (GhostWorld.Effects.cs)
             return w;
         }
 

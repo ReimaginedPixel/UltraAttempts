@@ -84,7 +84,7 @@ namespace UltraAttempts.Replay
             holder.transform.SetParent(parent, false);
             GameObject copy = UnityEngine.Object.Instantiate(source, holder.transform);
             copy.name = name ?? Game.CleanName(source.name) + " (replay)";
-            Strip(copy);
+            Strip(copy, Keep);
             foreach (Transform t in copy.GetComponentsInChildren<Transform>(true))
             {
                 t.gameObject.layer = layer;
@@ -115,9 +115,62 @@ namespace UltraAttempts.Replay
         private static bool Keep(Component c) =>
             c is Transform || c is Animator || c is MeshFilter || c is MeshRenderer || c is SkinnedMeshRenderer;
 
+        // A visual-only copy of one of the game's effects (a prefab or a live object) under parent: its particles,
+        // trails, lines, sprites, lights, meshes and Animator, nothing that thinks, collides or makes a sound.
+        // prepare sees the copy before it's stripped (while the game's own components on it are still there to read)
+        // and before it wakes; the copy keeps its own layers. Its particles don't play by themselves: whoever shows it
+        // runs them (the level's clock is stopped in a replay). Null if source is null.
+        public static GameObject MakeEffect(GameObject source, Transform parent, Action<GameObject> prepare)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+            var holder = new GameObject("UltraAttempts effect holder");
+            holder.SetActive(false);
+            holder.transform.SetParent(parent, false);
+            GameObject copy = UnityEngine.Object.Instantiate(source, holder.transform);
+            copy.name = Game.CleanName(source.name) + " (replay)";
+            foreach (ParticleSystem ps in copy.GetComponentsInChildren<ParticleSystem>(true))
+            {
+                ParticleSystem.MainModule main = ps.main;
+                main.playOnAwake = false;
+                main.stopAction = ParticleSystemStopAction.None;  // (not destroyed or switched off when it's done: it's kept for the next)
+                main.cullingMode = ParticleSystemCullingMode.AlwaysSimulate;
+                main.useUnscaledTime = false;
+            }
+            prepare?.Invoke(copy);
+            Strip(copy, KeepEffect);
+            foreach (Renderer r in copy.GetComponentsInChildren<Renderer>(true))
+            {
+                r.shadowCastingMode = ShadowCastingMode.Off;
+                r.receiveShadows = false;
+                if (r is SkinnedMeshRenderer skinned)
+                {
+                    skinned.updateWhenOffscreen = true;
+                }
+            }
+            foreach (Animator animator in copy.GetComponentsInChildren<Animator>(true))
+            {
+                animator.applyRootMotion = false;
+                animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                animator.updateMode = AnimatorUpdateMode.Normal;  // (with the level's clock stopped: it's run by hand)
+                animator.fireEvents = false;
+                animator.logWarnings = false;
+            }
+            copy.transform.SetParent(parent, false);
+            copy.SetActive(true);
+            UnityEngine.Object.Destroy(holder);
+            return copy;
+        }
+
+        private static bool KeepEffect(Component c) =>
+            c is Transform || c is ParticleSystem || c is ParticleSystemRenderer || c is TrailRenderer || c is LineRenderer || c is SpriteRenderer
+            || c is Light || c is MeshFilter || c is MeshRenderer || c is SkinnedMeshRenderer || c is Animator;
+
         // Scripts first (so nothing they require is still needed), then the rest; a few passes for
         // components that depend on each other.
-        private static void Strip(GameObject root)
+        private static void Strip(GameObject root, Func<Component, bool> keep)
         {
             for (int pass = 0; pass < 4; pass++)
             {
@@ -125,7 +178,7 @@ namespace UltraAttempts.Replay
                 Component[] all = root.GetComponentsInChildren<Component>(true);
                 foreach (Component c in all.OrderBy(c => c is MonoBehaviour ? 0 : 1))
                 {
-                    if (c == null || Keep(c))
+                    if (c == null || keep(c))
                     {
                         continue;
                     }

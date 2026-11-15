@@ -36,6 +36,7 @@ internal static class Program
             Codec();
             Details();
             Blocks();
+            Effects();
             OldAttempts();
             Damage();
             Compression();
@@ -816,6 +817,208 @@ internal static class Program
         RawAttempt bare = AttemptCodec.Decode(bytes, 0, bytes.Length, world: false);
         Check(bare.Count == a.Count && bare.Things.Count == 0 && bare.Sounds.Count == a.Sounds.Count, "...and without its world");
         Check(AttemptBlocks.All.Select(b => b.Tag).Distinct().Count() == AttemptBlocks.All.Count, "every block has a tag of its own");
+    }
+
+    private static readonly string[] PrefabNames = { "MuzzleFlash", "Ünïcödé SlideScrape", "", "Explosion Big", "Revolver Beam", new string('P', 300) };
+
+    // Effects (format 5's block 3) with anything in them: any frame, time, scale (NaN and all), tint and key; prefabs
+    // with names and paths of any length; links to the attempt's own looks and beams.
+    private static void ExtremeEffects(RawAttempt a, Random random)
+    {
+        for (int p = random.Next(1, 6); p > 0; p--)
+        {
+            a.AddEffectPrefab(PrefabNames[random.Next(PrefabNames.Length)], random.Next(3) == 0 ? $"Level#0/Ünïcödé Room#{p}/Effect#{random.Next(9)}" : "", random.Next(0, 1000));
+        }
+        int start = 0;
+        for (int k = random.Next(0, 40); k > 0; k--)
+        {
+            start += random.Next(0, 3) == 0 ? random.Next(-5, 400) : random.Next(0, 3);
+            float scale = AnyFloat(random);
+            var e = new EffectTrack
+            {
+                Prefab = random.Next(a.EffectPrefabs.Count),
+                Frame = (EffectFrame)random.Next(0, 4),
+                Start = start,
+                Stop = random.Next(3) == 0 ? -1 : start + random.Next(-10, 300),
+                End = random.Next(3) == 0 ? -1 : random.Next(int.MinValue, int.MaxValue),
+                ScaleX = scale,
+                ScaleY = random.Next(2) == 0 ? scale : AnyFloat(random),
+                ScaleZ = random.Next(2) == 0 ? scale : AnyFloat(random),
+                Tint = random.Next(2) == 0 ? 0u : (uint)random.Next() * 2u + (uint)random.Next(2),
+            };
+            int sample = start;
+            for (int i = random.Next(0, 25); i > 0; i--)
+            {
+                e.Add(sample,
+                    random.Next(-100_000_000, 100_000_001), random.Next(-100_000_000, 100_000_001), random.Next(int.MinValue, int.MaxValue),
+                    (short)random.Next(short.MinValue, short.MaxValue + 1), (short)random.Next(short.MinValue, short.MaxValue + 1),
+                    (short)random.Next(short.MinValue, short.MaxValue + 1), (short)random.Next(0, short.MaxValue + 1),
+                    (ushort)random.Next(0, 65536));
+                sample += random.Next(0, 3) == 0 ? random.Next(1, 200) : 2;
+            }
+            a.Effects.Add(e);
+        }
+        for (int i = 0; i < a.Looks.Count; i++)
+        {
+            if (random.Next(2) == 0)
+            {
+                a.LookPrefabs.Add(new EffectLink { Index = i, Prefab = random.Next(a.EffectPrefabs.Count) });
+            }
+        }
+        for (int i = 0; i < a.WorldEvents.Count; i++)
+        {
+            if (a.WorldEvents[i].Kind == WorldEventKind.Beam && random.Next(3) != 0)
+            {
+                a.BeamPrefabs.Add(new EffectLink { Index = i, Prefab = random.Next(a.EffectPrefabs.Count) });
+            }
+        }
+    }
+
+    private static bool SameEffects(RawAttempt a, RawAttempt b)
+    {
+        if (a.EffectPrefabs.Count != b.EffectPrefabs.Count || a.Effects.Count != b.Effects.Count
+            || !a.LookPrefabs.SequenceEqual(b.LookPrefabs) || !a.BeamPrefabs.SequenceEqual(b.BeamPrefabs))
+        {
+            return false;
+        }
+        for (int i = 0; i < a.EffectPrefabs.Count; i++)
+        {
+            EffectPrefab p = a.EffectPrefabs[i], q = b.EffectPrefabs[i];
+            if (p.Name != q.Name || p.Path != q.Path || p.Parts != q.Parts)
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < a.Effects.Count; i++)
+        {
+            EffectTrack e = a.Effects[i], f = b.Effects[i];
+            if (e.Prefab != f.Prefab || e.Frame != f.Frame || e.Start != f.Start || e.Stop != f.Stop || e.End != f.End || e.Tint != f.Tint
+                || !Bits(e.ScaleX, f.ScaleX) || !Bits(e.ScaleY, f.ScaleY) || !Bits(e.ScaleZ, f.ScaleZ) || e.Count != f.Count)
+            {
+                return false;
+            }
+            for (int k = 0; k < e.Count; k++)
+            {
+                if (e.Sample[k] != f.Sample[k] || e.PosX[k] != f.PosX[k] || e.PosY[k] != f.PosY[k] || e.PosZ[k] != f.PosZ[k] || e.RotX[k] != f.RotX[k]
+                    || e.RotY[k] != f.RotY[k] || e.RotZ[k] != f.RotZ[k] || e.RotW[k] != f.RotW[k] || e.Scale[k] != f.Scale[k])
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // The game's own effects (block 3): they come back exactly, only with the world, cloned for an attempt in
+    // progress, trimmed at its end, refused when they point at nothing; and what a minute of them costs.
+    private static void Effects()
+    {
+        Console.WriteLine("effects");
+        bool exact = true;
+        int effects = 0, keys = 0, links = 0;
+        for (int seed = 0; seed < 150; seed++)
+        {
+            RawAttempt a = Sample(seed, 2 + seed * 11 % 250, seed);
+            ExtremeEffects(a, new Random(seed));
+            RawAttempt b = RoundTrip(a);
+            exact &= Same(a, b) && SameEffects(a, b);
+            effects += a.Effects.Count;
+            keys += a.Effects.Sum(e => e.Count);
+            links += a.LookPrefabs.Count + a.BeamPrefabs.Count;
+        }
+        Check(exact && effects > 1000 && links > 50, $"150 attempts' effects come back exactly ({effects} effects, {keys} keys, {links} links to looks and beams; NaNs and extremes included)");
+
+        RawAttempt some = Sample(5, 120, 5);
+        ExtremeEffects(some, new Random(77));
+        RawAttempt bare = RoundTrip(some, world: false);
+        Check(bare.Effects.Count == 0 && bare.EffectPrefabs.Count == 0 && bare.LookPrefabs.Count == 0 && bare.Count == some.Count,
+            "they're the world's: read without it, an attempt has none");
+
+        var only = Sample(6, 60, 6, world: false);
+        int flash = only.AddEffectPrefab("MuzzleFlash", "", 4);
+        var track = new EffectTrack { Prefab = flash, Frame = EffectFrame.Camera, Start = 10, Stop = 12, End = 14 };
+        track.Add(10, 420, -300, 900, 0, 0, 0, 32767, 1000);
+        only.Effects.Add(track);
+        RawAttempt back = RoundTrip(only);
+        Check(only.HasThings && SameEffects(only, back) && back.Effects[0].Frame == EffectFrame.Camera && back.Effects[0].PosZ[0] == 900,
+            "an attempt with only effects keeps its world for them");
+
+        RawAttempt clone = some.Clone(AttemptEnd.InProgress);
+        clone.Effects[0].PosX[0] = 12345;
+        clone.Effects.Add(new EffectTrack());
+        clone.LookPrefabs.Add(new EffectLink());
+        Check(some.Effects[0].PosX[0] != 12345 && clone.Effects.Count == some.Effects.Count + 1 && clone.LookPrefabs.Count == some.LookPrefabs.Count + 1,
+            "an attempt in progress clones with its own copy of the effects");
+
+        var ending = new RawAttempt();
+        int dust = ending.AddEffectPrefab("Dust", "", 2);
+        var late = new EffectTrack { Prefab = dust, Start = 95, Stop = 120, End = 130 };
+        late.Add(95, 0, 0, 0, 0, 0, 0, 32767, 1000);
+        late.Add(110, 1, 0, 0, 0, 0, 0, 32767, 1000);
+        var early = new EffectTrack { Prefab = dust, Start = 5, Stop = 50, End = 60 };
+        ending.Effects.Add(late);
+        ending.Effects.Add(early);
+        EffectsBlock.Trim(ending, 100);
+        Check(late.Stop == -1 && late.End == -1 && late.Sample[1] == 100 && early.Stop == 50 && early.End == 60,
+            "an attempt's end: what stopped or went after its last sample hadn't yet, and no key is after it");
+
+        bool refused = true;
+        foreach (Action<RawAttempt> spoil in new Action<RawAttempt>[]
+        {
+            x => x.LookPrefabs.Add(new EffectLink { Index = x.Looks.Count, Prefab = 0 }),
+            x => x.BeamPrefabs.Add(new EffectLink { Index = 0, Prefab = x.EffectPrefabs.Count }),
+            x => x.Effects.Add(new EffectTrack { Prefab = x.EffectPrefabs.Count }),
+        })
+        {
+            RawAttempt bad = Sample(8, 40, 8, world: false);
+            bad.AddEffectPrefab("Spark", "", 1);
+            bad.WorldEvents.Add(new WorldEvent { Kind = WorldEventKind.Beam, Look = -1, Path = -1, RotW = 32767 });
+            spoil(bad);
+            byte[] bytes = AttemptCodec.Encode(bad);
+            try
+            {
+                AttemptCodec.Decode(bytes, 0, bytes.Length);
+                refused = false;
+            }
+            catch (Exception)
+            {
+            }
+        }
+        Check(refused, "an effect or link pointing at a prefab, look or beam that isn't there is refused");
+
+        // A minute of a fight's effects: 300 muzzle flashes on the camera (where the last one was), 40 slides with
+        // their scrape keyed along, 200 hits about the level that stay put.
+        RawAttempt minute = Smooth(60 * 60, 3, 60);
+        var random = new Random(3);
+        int muzzle = minute.AddEffectPrefab("MuzzleFlash", "", 6), scrape = minute.AddEffectPrefab("SlideScrape", "", 3), hit = minute.AddEffectPrefab("HitSpark", "", 2);
+        for (int i = 0; i < 540; i++)
+        {
+            int at = i * 6 + random.Next(0, 3);
+            int kind = i % 27 < 15 ? muzzle : i % 27 < 17 ? scrape : hit;
+            var e = new EffectTrack { Prefab = kind, Start = at, End = at + (kind == muzzle ? 6 : kind == scrape ? 60 : 30), Stop = kind == scrape ? at + 40 : -1 };
+            if (kind == muzzle)
+            {
+                e.Frame = EffectFrame.Camera;
+                e.Add(at, 412, -287, 934, 0, 0, 0, 32767, 1000);
+            }
+            else if (kind == scrape)
+            {
+                for (int k = 0; k < 20; k++)
+                {
+                    e.Add(at + k * 2, minute.PosX[at + k * 2], minute.PosY[at + k * 2] - 150, minute.PosZ[at + k * 2], 0, 23170, 0, 23170, 1000);
+                }
+            }
+            else
+            {
+                e.Add(at, minute.PosX[at] + random.Next(-2000, 2000), minute.PosY[at] + random.Next(-300, 300), minute.PosZ[at] + random.Next(-2000, 2000),
+                    (short)random.Next(-32767, 32768), (short)random.Next(-32767, 32768), (short)random.Next(-32767, 32768), (short)random.Next(0, 32768), 1000);
+            }
+            minute.Effects.Add(e);
+        }
+        int without = AttemptCodec.Encode(Smooth(60 * 60, 3, 60)).Length;
+        int with = AttemptCodec.Encode(minute).Length;
+        Check(SameEffects(minute, RoundTrip(minute)) && with - without < 12_000,
+            $"a minute of a fight's effects ({minute.Effects.Count} effects, {minute.Effects.Sum(e => e.Count)} keys) costs {(with - without) / 1024.0:0.0} KB");
     }
 
     // An attempt recorded by UltraAttempts 1.0: format 1, written by its own encoder (commit bf1d01f)

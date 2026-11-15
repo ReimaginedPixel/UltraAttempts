@@ -113,6 +113,9 @@ namespace UltraAttempts
         public static ConfigEntry<float> ExplosionOpacity;
         public static ConfigEntry<bool> DeathAnimations;
 
+        // The followed attempt's effects and projectiles as the game's own (EffectPlayback).
+        public static ConfigEntry<bool> Effects;
+
         public static void Bind(ConfigFile config)
         {
             Record = config.Bind("Recording", "Enabled", true,
@@ -202,6 +205,8 @@ namespace UltraAttempts
                 new ConfigDescription("How solid the followed attempt's explosions are: the game's own explosion (white for a moment, then its colour, growing and fading as it does), see-through so it doesn't hide the fight. 1: as solid as in the game.", new AcceptableValueRange<float>(0.05f, 1f)));
             DeathAnimations = config.Bind("Replay", "DeathAnimations", true,
                 "When an attempt dies its head pops off and flies (bouncing off the level), its body falls over and fades, and blood bursts out (only drawn: nothing is left in the level). Through its eyes, the camera backs out of its head to watch. Off: it just pops.");
+            Effects = config.Bind("Replay", "Effects", true,
+                "The followed attempt's effects as the game's own (recorded with WorldDetail = Everything): muzzle flashes on its gun, slide and wall sparks, dodges, landing dust, punches and hits landing, blood, explosions' fire, smoke and light, beams, and its projectiles with their trails and smoke, running at the replay's speed. Off: its projectiles are only their meshes, its beams plain lines.");
         }
     }
 }
