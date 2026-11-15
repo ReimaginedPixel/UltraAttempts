@@ -30,6 +30,7 @@ namespace UltraAttempts.Recording
         private readonly SessionStore store;
         private readonly WorldRecorder world = new WorldRecorder();
         private readonly SoundRecorder sounds = new SoundRecorder();
+        private readonly ArmRecorder arms = new ArmRecorder();
 
         private StatsManager sceneStats;
         private string sceneName;
@@ -245,6 +246,16 @@ namespace UltraAttempts.Recording
             }
         }
 
+        // A punch really starting (Punch.PunchStart), whatever button did it: the sample's punch, and the arms' count.
+        public void OnPunch(bool replaying)
+        {
+            if (current != null && !replaying && Settings.RecordWeapons.Value)
+            {
+                pulses |= SampleFlags.Punch;
+                arms.OnPunch();
+            }
+        }
+
         // The attempt sample it is right now, between this frame's samples (the game clock since the last step).
         private int SampleNow => Math.Max(0, (int)Math.Round((time + Math.Max(0.0, Time.timeAsDouble - clock)) / interval));
 
@@ -302,6 +313,7 @@ namespace UltraAttempts.Recording
                 current = null;
                 world.End();
                 sounds.End(attempt.Count - 1);
+                arms.End();
                 attempt.End = finishing ? AttemptEnd.Finish : AttemptEnd.Quit;
                 Submit(attempt, attempt.End);
             }
@@ -354,6 +366,7 @@ namespace UltraAttempts.Recording
             ownSteps = 0;
             world.Begin(current, Settings.World.Value);
             sounds.Begin(current, Settings.RecordSounds.Value);
+            arms.Begin(current, Settings.RecordWeapons.Value);
             last = Capture(nm);
             Emit(nm, last, current, 1f);
             nextTick = interval;
@@ -376,6 +389,7 @@ namespace UltraAttempts.Recording
             }
             world.End();
             sounds.End(attempt.Count - 1);
+            arms.End();
             attempt.End = reason;
             Report(attempt, nm);
             Submit(attempt, reason);
@@ -444,6 +458,7 @@ namespace UltraAttempts.Recording
                 Plugin.Log.LogInfo("...and everything else (WorldDetail = Everything): " + Everything(a));
             }
             Plugin.Log.LogInfo("...and its sounds (RecordSounds): " + sounds.Summary(a));
+            Plugin.Log.LogInfo("...and its arms: " + arms.Summary(a));
         }
 
         // What an attempt recorded besides V1 and its enemies, for the log.
@@ -627,6 +642,7 @@ namespace UltraAttempts.Recording
             }
             TrackUp(a, sample, nm);
             TrackCheckpoint(a, sample);
+            arms.Sample(sample);
 
             Quantize(f.Look, out short rx, out short ry, out short rz, out short rw);
             var flags = f.State | pulses;

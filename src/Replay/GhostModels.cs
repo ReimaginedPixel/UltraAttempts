@@ -89,6 +89,13 @@ namespace UltraAttempts.Replay
 
         private static readonly string[] HandNames = { "hand.R", "hand_R", "Hand.R", "Hand_R", "RightHand", "Right Hand", "R_Hand", "Hand_Right", "mixamorig:RightHand" };
         private static readonly string[] HeadNames = { "spine.006", "head", "Head", "mixamorig:Head" };
+        // The left arm (punches, the whiplash's rope): upper arm, forearm, hand.
+        private static readonly string[][] LeftArmNames =
+        {
+            new[] { "upper_arm.L", "upperarm.L", "UpperArm.L", "upper_arm_L", "UpperArm_L", "LeftArm", "Left Arm", "L_UpperArm", "mixamorig:LeftArm" },
+            new[] { "forearm.L", "lowerarm.L", "LowerArm.L", "forearm_L", "Forearm_L", "LeftForeArm", "Left Forearm", "L_Forearm", "mixamorig:LeftForeArm" },
+            new[] { "hand.L", "hand_L", "Hand.L", "Hand_L", "LeftHand", "Left Hand", "L_Hand", "Hand_Left", "mixamorig:LeftHand" },
+        };
 
         private enum BakeMode
         {
@@ -123,6 +130,7 @@ namespace UltraAttempts.Replay
         private GameObject template;
         private int[] bodyIndex;            // the body's skinned renderers, among the template's
         private string handPath;            // the right hand, from the template's root
+        private string[] leftArmPaths;      // the left arm's upper arm, forearm and hand (null: not all found)
         private bool[] bakedInOwnSpace;     // per body renderer: BakeMesh took its Transform's scale out
         private Color32[][] shading;        // per body renderer: the crowd's shading, for baked animated ghosts
         private Color32[][] white;
@@ -248,6 +256,11 @@ namespace UltraAttempts.Replay
             ModelMeshes.LogOnce(hand != null
                 ? $"ghost model {Label}: right hand found ('{hand.name}', searched {string.Join(", ", HandNames)})"
                 : $"ghost model {Label}: no right hand bone (searched {string.Join(", ", HandNames)}); bones: {string.Join(", ", bodies[0].bones.Where(b => b != null).Select(b => b.name))}");
+            Transform[] leftArm = LeftArmNames.Select(names => Puppet.Find(template.transform, names)).ToArray();
+            leftArmPaths = leftArm.All(b => b != null) ? leftArm.Select(b => PathFrom(template.transform, b)).ToArray() : null;
+            ModelMeshes.LogOnce(leftArmPaths != null
+                ? $"ghost model {Label}: left arm found ({string.Join(", ", leftArm.Select(b => b.name))}): it punches, and holds the whiplash's rope"
+                : $"ghost model {Label}: no left arm bones (found {string.Join(", ", leftArm.Where(b => b != null).Select(b => b.name))}): punches show as a line");
             Transform head = Puppet.Find(template.transform, HeadNames);
 
             scratch = new Mesh { name = "UltraAttempts bake", hideFlags = HideFlags.HideAndDontSave };
@@ -673,7 +686,14 @@ namespace UltraAttempts.Replay
             {
                 animator.fireEvents = false;
             }
-            return new LivePuppet(holder, animator, body, hand, LiveBakes, ghostMaterial);
+            var puppet = new LivePuppet(holder, animator, body, hand, LiveBakes, ghostMaterial);
+            if (leftArmPaths != null)
+            {
+                puppet.UpperArmL = model.transform.Find(leftArmPaths[0]);
+                puppet.ForearmL = model.transform.Find(leftArmPaths[1]);
+                puppet.HandL = model.transform.Find(leftArmPaths[2]);
+            }
+            return puppet;
         }
 
         // Where a body renderer's baked vertices are, and how big one of their units is in the world.
@@ -733,6 +753,9 @@ namespace UltraAttempts.Replay
         public readonly Animator Animator;
         public readonly SkinnedMeshRenderer[] Body;
         public readonly Transform Hand;
+        public Transform UpperArmL, ForearmL, HandL;    // the left arm (null: the model hasn't one)
+        public bool Punching;                           // its left arm was swung into a punch last frame:
+        public Quaternion UpperWas, ForeWas, UpperSet, ForeSet;   // as the animator left it, and as it was set
         public readonly Mesh[] Live;        // the body baked each frame (when the model can be baked)
         private readonly Material[][] originals;
         private readonly Material[][] ghosted;

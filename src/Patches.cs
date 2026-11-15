@@ -111,6 +111,16 @@ namespace UltraAttempts
             return !director.TryLevelEnd(__instance, thenNextLevel: true);
         }
 
+        // A punch really starting (it was ready for one), whatever button did it: recorded as the attempt's punch.
+        [HarmonyPatch(typeof(Punch), nameof(Punch.PunchStart)), HarmonyPrefix]
+        private static void Punching(Punch __instance)
+        {
+            if (__instance != null && __instance.ready)
+            {
+                Recorder.Instance?.OnPunch(Replaying);
+            }
+        }
+
         // ---------------------------------------------------------------- the game's own sounds
         // (Recording.RecordSounds). Nearly all of ULTRAKILL's sounds go through its Play / PlayOneShot / PlayDelayed
         // extensions (tracked or not), which hand the source to its virtual audio; sounds that play by themselves when

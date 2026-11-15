@@ -60,10 +60,12 @@ Through an attempt's eyes the camera is smooth. It follows a curve through the r
 ### Through an attempt's eyes
 
 You see the screen as it was when you played that attempt:
-- **Its weapon** is ULTRAKILL's own viewmodel, animated. It draws each weapon as the attempt switched to it and fires on its shots: the revolver's charged and twirl shots, the shotgun's pump and core, the jackhammer's swing, the nailgun spinning up, the railcannon once it's charged, rockets, cannonballs and napalm. Your arm punches when it punched (and flips the Marksman's coins), and the gun sways as it walked.
+- **Its weapon** is ULTRAKILL's own viewmodel, animated. It draws each weapon as the attempt switched to it and fires on its shots: the revolver's charged and twirl shots, the shotgun's pump and core, the jackhammer's swing, the nailgun spinning up, the railcannon once it's charged, rockets, cannonballs and napalm. The gun sways as it walked.
+- **Its arm** is the one it had out, the Feedbacker or the Knuckleblaster (copied from the game's own), switching when it switched. It plays exactly what the arm did: every punch, the jab when one landed, parries, the Knuckleblaster's blast, the Marksman's coin flips, holding things.
+- **Its whiplash** goes out when it threw it: the arm, the rope out to where the hook went, and the hook itself there in the world (behind walls and all), then the pull and the catch.
 - **The HUD** is the game's own, with that attempt's health and weapon. Whatever else on it would show your game right now (style, stamina, charges) is left out. If your HUD is off in ULTRAKILL's settings, a lookalike stands in. **G** turns it on and off, and the replay's timeline moves to the top meanwhile.
 
-These are copies of your own weapons and HUD, so only weapons in your loadout animate (others are a still model), and the arm is the one you have now. Your own gun and HUD hide meanwhile and come back as they were. `BepInEx\LogOutput.log` has a line starting `first person:` saying what was ready.
+These are copies of your own weapons and HUD, so only weapons in your loadout animate (others are a still model). Attempts recorded before arms were punch with the arm you have now, and show no whiplash. Your own gun, arm and HUD hide meanwhile and come back as they were. `BepInEx\LogOutput.log` has a line starting `first person:` saying what was ready (the weapons, `the whiplash ready (...)`, `arms: ...`).
 
 ### What the ghosts show
 
@@ -72,7 +74,7 @@ Each attempt is V1: the third-person V1 from the platformer secret level, at V1'
 - **The rest of the crowd** are see-through and tinted in their own colour. The winner is gold, and the attempt you were on when you opened the replay is white.
 - **The 24 nearest** are fully animated (**AnimatedGhosts**). Everyone else uses V1 posed in 13 ways (a run cycle, jump, fall, slide, dash), so a crowd of a thousand still moves like V1s and stays fast.
 
-Each ghost shows a tracer for every shot (up to where it hit the level) and throws its punches. It flashes red when hurt. The winner leaves a gold trail.
+Each ghost shows a tracer for every shot (up to where it hit the level) and throws its punches: the animated ones swing their left arm out. When it threw the whiplash, its rope runs from its left hand to where the hook went, with the hook there (the followed attempt's and the winner's in the game's own look, the rest see-through in their colour). It flashes red when hurt. The winner leaves a gold trail.
 
 When an attempt dies, its head pops off and flies: up and on the way it was going, spinning, bouncing off the floor and walls until it comes to rest. Its body falls over where it stood, blood bursts from the neck and pools under it, and after a couple of seconds it all fades. A red marker stays where it died (M hides them). The crystal ghosts shatter instead. It's only drawn (no gore is left in the level), and it stays cheap with 30 attempts dying in the same spot. **DeathAnimations** turns it off (then they just pop).
 
@@ -104,8 +106,8 @@ The other attempts' worlds play at the same time: the 20 nearest living attempts
 
 ### What you hear
 
-Each attempt records the game's own sounds as you heard them: your gunshots and punches, footsteps, explosions, the enemies, Gabriel's taunts and every other voice line, doors. Not the music. A replay plays them again with the game's own clips:
-- **The attempt you follow** (or, in the overview and free cam, the winner) plays its sounds in full, from where they were. Through its eyes they sound as they did.
+Each attempt records the game's own sounds as you heard them: your gunshots and punches, footsteps, jumps, dashes and slides, the whiplash, explosions, the enemies, Gabriel's taunts and every other voice line, doors, water. Not the music. A replay plays them again with the game's own clips:
+- **The attempt you follow** (or, in the overview and free cam, the winner) plays its sounds in full, as loud as you heard them (at the default **Volume**), from where they were. Through its eyes they sound as they did.
 - **Every other attempt** plays its sounds quieter (**OtherAttemptsVolume**, 0.3; 0 for only the followed one's), the nearest first. The same sound from many attempts at once (28 gunshots as the level starts) plays once, a little louder.
 - Pausing pauses them, speeding up or slowing down pitches them up or down, and a seek or a camera cut stops them (no burst of everything skipped over).
 - Attempts recorded before sounds were play their shots with the game's sound for that gun.
@@ -162,7 +164,9 @@ With **WorldDetail** above Off, each attempt also records:
 - each enemy around (where it is, which way it faces, its animation, its health, when it dies)
 - every door's state at the start, then each open and close
 
-With **RecordSounds** (on by default, whatever WorldDetail is), it also records each of the game's sounds as it starts: its clip by name (found again among the game's loaded clips later), when and where (V1's own go with the ghost), how loud, pitched and spread, when it stopped if it was cut off or looped, and where it went if it moved. Not the music, and nothing out of earshot. About 5 KB a minute in a fight.
+With **RecordSounds** (on by default, whatever WorldDetail is), it also records each of the game's sounds as it starts: its clip by name (found again among the game's loaded clips later), when and where (V1's own go with the ghost), how loud, pitched and spread, when it stopped if it was cut off or looped, and where it went if it moved. Not the music, and nothing out of earshot. About 5 KB a minute in a fight. Most sounds come in through the game's own ways of playing them. The ones that play by themselves when they're spawned (explosions, V1's jumps and dashes, the whiplash, the railcannon firing) are taken as they start, timed from when they were spawned. Anything else (a plain `AudioSource.Play`, a sound switched back on) is caught by a look at every sound source every other frame, timed from how far into its clip it is. Each sound counts once. The log's `...and its sounds` line says how many came in each way: `N playing by themselves when spawned` and `M caught by the look round`.
+
+With **RecordWeapons**, it also records V1's arms: which arm it had out and when it switched, every state its animator went into (punches, parries, blasts, coin flips), whether the whiplash's arm was out, and where the whiplash's end was at each sample it was out of the hand. Punches are taken from the game's own punches, whatever key did them. The log's `...and its arms:` line says how many punches and whiplash throws there were.
 
 With Everything, it also records whatever else moves (see above): each thing with what it looks like (its meshes and materials by name, found again among the game's loaded assets later, or a coloured box) and where it was, plus explosions, beams and breakables as events. A busy fight adds about 40 KB a minute. Worlds are read back from the run file only when a replay needs them, so long runs still load quickly.
 
@@ -181,7 +185,7 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 |---|---|---|
 | Recording / Enabled | true | Record attempts at all. |
 | Recording / SampleRate | 60 | Samples per second (10-60). (A config from 1.0 that still says 30 moves to 60 once.) |
-| Recording / RecordWeapons | true | Record the weapon, shots and punches too. |
+| Recording / RecordWeapons | true | Record the weapon, shots and punches too, and the arms (which arm, what it did, the whiplash). |
 | Recording / WorldDetail | Everything | Off (only V1), Enemies (enemies and doors), Everything (whatever moves: much bigger recordings). |
 | Recording / RecordSounds | true | Record the game's own sounds too (not the music), to hear them in a replay. |
 | Recording / ContinueRunsAcrossVisits | true | Leaving a level keeps its run going (off: every visit is a new run). |
@@ -197,7 +201,7 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Replay / MinAttemptsAtLevelEnd | 2 | Only play at the level's end if it took at least this many. |
 | Replay / ShowWeapons | true | Weapons, shots and punches on the ghosts. |
 | Replay / DeathMarkers | true | A red marker where each attempt died. |
-| Replay / Sounds, Volume | true, 0.6 | A pop for each death, a chime for the win. |
+| Replay / Sounds, Volume | true, 0.6 | A pop for each death, a chime for the win. The game's sounds play as loud as they were at 0.6 (quieter below it). |
 | Replay / OtherAttemptsVolume | 0.3 | How loud the other attempts' sounds are next to the followed one's (0: only the followed one's). The game's sounds also follow Sounds, Volume and the game's own sound effects volume. |
 | Replay / GhostOpacity | 0.35 | How solid the ghosts are. |
 | Replay / GhostColors | Rainbow | Rainbow, or Progress (red for the first attempts to green for the last). |
@@ -263,7 +267,7 @@ The code:
 - `src/Recording`:
   - `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit).
   - `WorldRecorder.cs` records the enemies and doors, and `ThingRecorder.cs` everything else.
-  - `SoundRecorder.cs` records the game's sounds.
+  - `SoundRecorder.cs` records the game's sounds, and `ArmRecorder.cs` V1's arms and the whiplash (format 5's block 1, `Blocks/ArmsBlock.cs`).
   - `RawAttempt.cs` is an attempt's samples, and `AttemptCodec.cs` packs them.
   - `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
 - `src/Replay`:
@@ -271,13 +275,14 @@ The code:
   - `GhostRenderer.cs`, `GhostModels.cs` and `WeaponModels.cs` draw the V1 ghosts, their weapons, bursts, markers, tracers and trails onto ULTRAKILL's camera, so they get its pixelation and palette.
   - `WorldPlayback.cs` plays the followed attempt's enemies, and `DoorPlayback.cs` its doors. `DeathEffects.cs` is the deaths (heads, bodies, blood). `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
-  - `FirstPersonView.cs` is what you see through an attempt's eyes: `Viewmodel.cs` animates copies of your weapons and arm from what it recorded, and `FirstPersonHud.cs` shows its health and weapon on a copy of the game's HUD.
+  - `FirstPersonView.cs` is what you see through an attempt's eyes: `Viewmodel.cs` animates copies of your weapons, the arms and the whiplash from what it recorded, and `FirstPersonHud.cs` shows its health and weapon on a copy of the game's HUD. `Whiplash.cs` draws the ghosts' whiplashes from outside.
   - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
   - `GameSounds.cs` plays the game's own sounds back, every attempt's.
 - `src/AttemptsMenu.cs` is the ULTRAATTEMPTS menu on the pause screen.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:
   - Recording: scene loads, restarts, the results screen, the camera, doors opening and closing, explosions, beams and breakables.
   - Recording sounds: the game's Play, PlayOneShot and PlayDelayed, and its virtual audio picking up the sounds that play by themselves.
+  - Recording the arms: punches starting.
   - The replay: the camera, Escape, and the results screen's continue.
   - Doors switching rooms off.
 

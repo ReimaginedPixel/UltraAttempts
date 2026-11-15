@@ -215,6 +215,7 @@ namespace UltraAttempts.Replay
             g.Doors = InOrder(doors);
             g.DoorPaths = raw.DoorPaths != null ? raw.DoorPaths.ToArray() : Array.Empty<string>();
             g.Sounds = GhostSounds.FromRaw(raw, g.Rate);
+            ArmsFromRaw(raw, g);
             if (raw.SourcePath != null)
             {
                 g.Source = new WorldSource { Path = raw.SourcePath, Offset = raw.SourceOffset, Length = raw.SourceLength };
