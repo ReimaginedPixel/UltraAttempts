@@ -37,6 +37,7 @@ internal static class Program
             Details();
             Blocks();
             Effects();
+            Sections();
             OldAttempts();
             Damage();
             Compression();
@@ -1019,6 +1020,87 @@ internal static class Program
         int with = AttemptCodec.Encode(minute).Length;
         Check(SameEffects(minute, RoundTrip(minute)) && with - without < 12_000,
             $"a minute of a fight's effects ({minute.Effects.Count} effects, {minute.Effects.Sum(e => e.Count)} keys) costs {(with - without) / 1024.0:0.0} KB");
+    }
+
+    // Block 2: which parts of the level were switched on. The paths (sharing most of their beginnings, odd names among
+    // them), each part's state at the start and every change after come back exactly, but not without the world; an
+    // attempt in progress copies them; an attempt without any writes no block; nonsense is refused.
+    private static void Sections()
+    {
+        Console.WriteLine("sections");
+        RawAttempt a = Sample(13, 400, 13);
+        var random = new Random(13);
+        for (int room = 0; room < 40; room++)
+        {
+            for (int part = 0; part < 50; part++)
+            {
+                a.SectionPaths.Add($"Level#0/{room} - Hall#0/Geometry#{part / 25}/Rock ({part})#0");
+            }
+        }
+        a.SectionPaths.Add("Ünïcode ✓ #name#0/a|b#2/x#y#10");
+        a.SectionPaths.Add("");
+        a.SectionPaths.Add("Level#0");
+        for (int i = 0; i < a.SectionPaths.Count; i++)
+        {
+            a.SectionChanges.Add(new SectionChange { Sample = 0, Section = i, On = random.Next(3) > 0 });
+        }
+        int sample = 0;
+        for (int k = 0; k < 300; k++)
+        {
+            sample += random.Next(0, 4) == 0 ? 0 : random.Next(1, 30);
+            a.SectionChanges.Add(new SectionChange { Sample = sample, Section = random.Next(a.SectionPaths.Count), On = random.Next(2) == 0 });
+        }
+        a.SectionChanges.Add(new SectionChange { Sample = 2, Section = 0, On = false });  // (out of order, as a damaged recording might be)
+
+        RawAttempt b = RoundTrip(a);
+        bool same = Same(a, b) && b.SectionPaths.SequenceEqual(a.SectionPaths) && b.SectionChanges.Count == a.SectionChanges.Count;
+        for (int i = 0; same && i < a.SectionChanges.Count; i++)
+        {
+            same = a.SectionChanges[i].Sample == b.SectionChanges[i].Sample && a.SectionChanges[i].Section == b.SectionChanges[i].Section && a.SectionChanges[i].On == b.SectionChanges[i].On;
+        }
+        Check(same, $"{a.SectionPaths.Count} parts of the level and {a.SectionChanges.Count} times they were found or switched come back exactly");
+        RawAttempt again = RoundTrip(a);
+        Check(again.SectionPaths.SequenceEqual(a.SectionPaths) && ReferenceEquals(again.SectionPaths[1234], b.SectionPaths[1234]) && ReferenceEquals(again.SectionPaths[^1], b.SectionPaths[^1]),
+            "...and read again, the same paths are the same strings (a thousand attempts at a level don't make a thousand of each)");
+        RawAttempt bare = RoundTrip(a, world: false);
+        Check(bare.SectionPaths.Count == 0 && bare.SectionChanges.Count == 0 && bare.Count == a.Count, "...but not without the world (it's the world's block)");
+
+        RawAttempt without = a.Clone(a.End);
+        without.SectionPaths.Clear();
+        without.SectionChanges.Clear();
+        int cost = AttemptCodec.Encode(a).Length - AttemptCodec.Encode(without).Length;
+        Check(cost > 0 && cost < 6000, $"...in {cost} bytes deflated");
+        RawAttempt none = RoundTrip(without);
+        Check(none.SectionPaths.Count == 0 && Same(without, none), "an attempt without them writes no block, and reads back without them");
+
+        RawAttempt live = a.Clone(AttemptEnd.InProgress);
+        a.SectionPaths.Add("Level#0/later#0");   // (the recorder carries on after the snapshot)
+        a.SectionChanges.Add(new SectionChange { Sample = 399, Section = a.SectionPaths.Count - 1, On = true });
+        Check(live.SectionPaths.Count == a.SectionPaths.Count - 1 && live.SectionChanges.Count == a.SectionChanges.Count - 1, "an attempt in progress clones its own lists of them");
+
+        Check(Refused(w => { w.UInt(1); w.UInt(0); w.String("a"); w.UInt(1); w.Int(0); w.Int(1 << 1); }), "a change to a part that isn't there is refused");
+        Check(Refused(w => { w.UInt(2); w.UInt(0); w.String("ab"); w.UInt(3); w.String("c"); w.UInt(0); }), "a path starting with more of the one before than it has is refused");
+        Check(Refused(w => { w.UInt(1); w.UInt(0); w.String("a"); w.UInt(1); w.Int(-5); w.Int(0); }), "a change before the attempt started is refused");
+        Check(Refused(w => { w.UInt(1000); w.UInt(0); }), "more parts than the block could hold are refused");
+    }
+
+    private static bool Refused(Action<AttemptCodec.VarWriter> write)
+    {
+        var w = new AttemptCodec.VarWriter(64);
+        write(w);
+        try
+        {
+            SectionsBlock.Decode(new AttemptCodec.VarReader(w.Buffer, 0, w.Length), new RawAttempt());
+            return false;
+        }
+        catch (InvalidDataException)
+        {
+            return true;
+        }
+        catch (EndOfStreamException)
+        {
+            return true;
+        }
     }
 
     // An attempt recorded by UltraAttempts 1.0: format 1, written by its own encoder (commit bf1d01f)

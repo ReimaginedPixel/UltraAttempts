@@ -1,12 +1,13 @@
 using System.Collections.Generic;
+using UltraAttempts.Recording;
 using UnityEngine;
 
 namespace UltraAttempts.Replay
 {
-    // ULTRAKILL switches rooms off behind doors that close behind you (Door.Optimize), so a replay at
-    // the end of a level would show earlier attempts running through nothing. These are the rooms it
-    // switched off: a replay switches them back on (as walking back through the door would), and off
-    // again after.
+    // ULTRAKILL switches rooms off behind doors that close behind you (Door.Optimize), and on as their doors open. An
+    // attempt recorded before the level's parts were (SectionRecorder) doesn't say which it had on, so a replay showing
+    // it brings these rooms back instead, as copies that only draw (SectionPlayback), so it isn't running through
+    // nothing: the ones Door.Optimize switched off this visit, and any other room a door switches that's off now.
     internal static class RoomReveal
     {
         private static readonly HashSet<GameObject> optimized = new HashSet<GameObject>();
@@ -26,32 +27,41 @@ namespace UltraAttempts.Replay
             }
         }
 
-        public static List<GameObject> Reveal()
+        // The rooms off now (not a checkpoint's spare ones).
+        public static List<GameObject> Rooms(LevelPaths level)
         {
-            var revealed = new List<GameObject>();
             optimized.RemoveWhere(room => room == null);
-            foreach (GameObject room in optimized)
+            var rooms = new HashSet<GameObject>(optimized);
+            foreach (Door door in Object.FindObjectsByType<Door>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
-                if (!room.activeSelf)
+                if (door != null && !level.InSpare(door.transform))
                 {
-                    room.SetActive(true);
-                    revealed.Add(room);
+                    Add(rooms, door.activatedRooms);
+                    Add(rooms, door.deactivatedRooms);
                 }
             }
-            return revealed;
+            var off = new List<GameObject>();
+            foreach (GameObject room in rooms)
+            {
+                if (room != null && !room.activeSelf && room.scene == level.Scene && !level.InSpare(room.transform))
+                {
+                    off.Add(room);
+                }
+            }
+            return off;
         }
 
-        public static void Hide(List<GameObject> revealed)
+        private static void Add(HashSet<GameObject> rooms, GameObject[] more)
         {
-            if (revealed == null)
+            if (more == null)
             {
                 return;
             }
-            foreach (GameObject room in revealed)
+            foreach (GameObject room in more)
             {
                 if (room != null)
                 {
-                    room.SetActive(false);
+                    rooms.Add(room);
                 }
             }
         }

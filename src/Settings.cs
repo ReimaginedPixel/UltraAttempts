@@ -194,7 +194,7 @@ namespace UltraAttempts
             MinShotSeconds = config.Bind("Replay", "MinShotSeconds", 0.75f,
                 new ConfigDescription("Next-to-die camera: skip attempts that die sooner than this after a cut, so it doesn't flicker through the early deaths.", new AcceptableValueRange<float>(0f, 5f)));
             RevealRooms = config.Bind("Replay", "RevealRooms", true,
-                "Bring back the rooms ULTRAKILL switched off behind closed doors while a replay plays, so ghosts aren't running through the void. They switch off again after.");
+                "Show the level as the attempt you watch had it: the areas it had switched on show (copies that only draw, so nothing in them wakes), and what it had switched off hides. Attempts recorded without this (before it, or with WorldDetail = Off) bring back the rooms the level's doors switch, so ghosts aren't running through the void. Everything goes back after.");
             Loop = config.Bind("Replay", "Loop", false, "Start over when the replay ends (instead of returning to the game).");
 
             WatchKey = config.Bind("Keys", "Watch", Key.F8, "On the results screen: watch every attempt.");

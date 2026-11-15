@@ -113,7 +113,13 @@ Each attempt records the game's own sounds as you heard them: your gunshots and 
 
 The death pop and the win chime still play on top. A clip the level hasn't loaded is skipped; `BepInEx\LogOutput.log` says how many were found.
 
-ULTRAKILL switches rooms off behind doors that close behind you. While a replay plays, those rooms come back (as if you'd walked back through the door), so earlier attempts aren't running through nothing. They switch off again after.
+### The level as it was
+
+ULTRAKILL switches parts of a level on as you reach them and off behind you, so a replay at the level's end (or from the menu, before you've got far) would show attempts running through nothing. Each attempt records which parts were switched on, and when, and the replay shows the level as the attempt you watch (or, in the overview and free cam, the winner) had it:
+- **What it had on that's off now** shows as a copy that only draws: its meshes, materials and lights, nothing that thinks, so no enemy, trigger, arena, sound or music wakes. The copies are made while the replay loads, so cuts don't hitch.
+- **What it had off that's on now** hides.
+
+Nothing of the level's is switched on or off, and everything goes back after. Attempts recorded before this bring back the rooms the level's doors switch instead. **RevealRooms** turns it off.
 
 ## Runs and attempts
 
@@ -162,6 +168,7 @@ Recordings from 1.0 had the shake in them; the replay takes it out of those (abo
 With **WorldDetail** above Off, each attempt also records:
 - each enemy around (where it is, which way it faces, its animation, its health, when it dies)
 - every door's state at the start, then each open and close
+- which parts of the level are switched on: whatever the level's scripts switch on and off, and whatever's off when it starts with something to see in it (found once a level, a few milliseconds a frame); each one's state at the start, then each change, checked 10 times a second. Checkpoints making their rooms again keep the same parts. A few KB per attempt.
 
 With **RecordSounds** (on by default, whatever WorldDetail is), it also records each of the game's sounds as it starts: its clip by name (found again among the game's loaded clips later), when and where (V1's own go with the ghost), how loud, pitched and spread, when it stopped if it was cut off or looped, and where it went if it moved. Not the music, and nothing out of earshot. About 5 KB a minute in a fight.
 
@@ -210,7 +217,7 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Replay / CameraShake | false | Through an attempt's eyes: shake when it gets hurt, as the game does. |
 | Replay / MaxGhosts | 2000 | Most attempts in one replay (the newest, plus every win). |
 | Replay / MinShotSeconds | 0.75 | Next-to-die camera: the shortest a shot lasts. |
-| Replay / RevealRooms | true | Bring back rooms switched off behind doors while a replay plays. |
+| Replay / RevealRooms | true | Show the level as the attempt watched had it (its areas switched on as copies that only draw, what it had off hidden). |
 | Replay / Loop | false | Start over at the end. |
 | Replay / ExplosionOpacity | 0.5 | How solid the followed attempt's explosions are (1: as in the game). |
 | Replay / DeathAnimations | true | Heads fly off, bodies fall over, blood (and the camera backs out to watch). Off: they just pop. |
@@ -264,7 +271,7 @@ It saves screenshots and `selftest.log` into `tests/InGameTest/out`, then quits.
 The code:
 - `src/Recording`:
   - `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit).
-  - `WorldRecorder.cs` records the enemies and doors, and `ThingRecorder.cs` everything else. `EffectRecorder.cs` catches what the game makes: its effects, and things from their first frame.
+  - `WorldRecorder.cs` records the enemies and doors, `SectionRecorder.cs` which parts of the level are switched on, and `ThingRecorder.cs` everything else. `EffectRecorder.cs` catches what the game makes: its effects, and things from their first frame.
   - `SoundRecorder.cs` records the game's sounds.
   - `RawAttempt.cs` is an attempt's samples, and `AttemptCodec.cs` packs them.
   - `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
@@ -274,7 +281,8 @@ The code:
   - `WorldPlayback.cs` plays the followed attempt's enemies, and `DoorPlayback.cs` its doors. `DeathEffects.cs` is the deaths (heads, bodies, blood). `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds. `EffectPlayback.cs` shows the followed attempt's effects, projectiles and beams as copies of the game's own prefabs.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
   - `FirstPersonView.cs` is what you see through an attempt's eyes: `Viewmodel.cs` animates copies of your weapons and arm from what it recorded, and `FirstPersonHud.cs` shows its health and weapon on a copy of the game's HUD.
-  - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
+  - `SectionPlayback.cs` shows the level as the attempt watched had it (copies of what it had on, hiding what it had off), and `RoomReveal.cs` the rooms for attempts recorded before that.
+  - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds.
   - `GameSounds.cs` plays the game's own sounds back, every attempt's.
 - `src/AttemptsMenu.cs` is the ULTRAATTEMPTS menu on the pause screen.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:
