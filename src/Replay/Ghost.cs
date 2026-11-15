@@ -261,7 +261,7 @@ namespace UltraAttempts.Replay
             g.kills = kills.ToArray();
             g.EnemyCount = world.Enemies.Length;
             g.ThingCount = world.Things.Length;
-            g.HasEverything = world.Things.Length > 0 || world.Moments.Length > 0 || world.Breaks.Length > 0;
+            g.HasEverything = world.Things.Length > 0 || world.Moments.Length > 0 || world.Breaks.Length > 0 || world.Effects.Length > 0;
             g.MostAtOnce = world.Enemies.Length > 0 ? MostOfEachAtOnce(world.Enemies) : NoEnemies;
         }
 

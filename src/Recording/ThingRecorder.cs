@@ -11,7 +11,8 @@ namespace UltraAttempts.Recording
     // Every moving thing with a rigidbody (anyone's projectiles, coins, rockets, nails, cannonballs, harpoons,
     // gibs, debris, props knocked about) and the level's own movers (platforms, elevators, pistons, trams, big
     // doors), as keys while they move; explosions, beams and breakables breaking as events. Like the rest of the
-    // recorder it only reads. Bounded: within Range of V1, MaxLive at once, MaxKeys an attempt.
+    // recorder it only reads. Bounded: within Range of V1, MaxLive at once, MaxKeys an attempt. Things the game is
+    // seen making (EffectRecorder, which also records the game's effects) are tracked from the frame they're made.
     internal sealed class ThingRecorder
     {
         private const float Range = 150f;
@@ -101,9 +102,18 @@ namespace UltraAttempts.Recording
 
         public bool On => attempt != null && !failed;
 
+        // The game's own effects, and the things it's seen making (WorldDetail = Everything).
+        public EffectRecorder Effects { get; }
+
+        public ThingRecorder()
+        {
+            Effects = new EffectRecorder(this);
+        }
+
         public void EnterScene()
         {
             End();
+            Effects.EnterScene();
             known.Clear();
             paths.Clear();
             movers.Clear();
@@ -114,6 +124,7 @@ namespace UltraAttempts.Recording
         public void Begin(RawAttempt a, bool record)
         {
             End();
+            Effects.Begin(a, record);
             attempt = record ? a : null;
             failed = false;
             keys = 0;
@@ -144,6 +155,7 @@ namespace UltraAttempts.Recording
         // The attempt's over: whatever's still tracked stops here (still there: Gone stays false).
         public void End()
         {
+            Effects.End();
             foreach (Live l in live)
             {
                 l.T = null;
@@ -157,6 +169,7 @@ namespace UltraAttempts.Recording
         // Once a frame, before its samples: how each tracked thing is now.
         public void Frame()
         {
+            Effects.Frame();
             if (!On)
             {
                 return;
@@ -182,6 +195,7 @@ namespace UltraAttempts.Recording
         // A world sample (every EnemyStride-th attempt sample), `between` of the way from last frame to this.
         public void Tick(int sample, float between)
         {
+            Effects.Tick(sample);
             if (!On)
             {
                 return;
@@ -529,6 +543,53 @@ namespace UltraAttempts.Recording
             byKey[key] = l;
             attempt.Things.Add(l.Track);
         }
+
+        // A thing the game has just made (EffectRecorder saw it): tracked from now, not from the next scan, so the
+        // shortest-lived (pellets, nails) are in too. Its look (-1: none), or -2 if it isn't tracked.
+        public int Spawned(Transform t, int sample, out ThingKind kind)
+        {
+            kind = ThingKind.Other;
+            NewMovement nm = Game.Player;
+            if (!On || t == null || nm == null)
+            {
+                return -2;
+            }
+            try
+            {
+                player = nm.transform;
+                camera = nm.cc != null ? nm.cc.transform : null;
+                Rigidbody rb = t.GetComponent<Rigidbody>();
+                int key = t.GetInstanceID();
+                if (rb == null || byKey.ContainsKey(key) || (t.position - player.position).sqrMagnitude > Range * Range)
+                {
+                    return -2;
+                }
+                if (!known.TryGetValue(key, out Known k))
+                {
+                    k = Judge(rb);
+                    known[key] = k;
+                }
+                if (!k.Eligible)
+                {
+                    return -2;
+                }
+                Track(t, key, k, sample);
+                if (!byKey.TryGetValue(key, out Live l))
+                {
+                    return -2;  // (full)
+                }
+                kind = l.Track.Kind;
+                return l.Track.Look;
+            }
+            catch (Exception e)
+            {
+                Fail(e);
+                return -2;
+            }
+        }
+
+        // Whether the object with this instance id is being tracked now.
+        public bool Tracks(int key) => byKey.ContainsKey(key);
 
         // Full: whatever's been still the longest (a stuck nail, a gib on the floor; not the level's movers) makes
         // way, if it's been still a second or more. It stays in the replay where it came to rest.
@@ -881,9 +942,9 @@ namespace UltraAttempts.Recording
             try
             {
                 LineRenderer lr = beam.GetComponent<LineRenderer>();
-                if (lr != null)
+                if (lr != null && Line(lr, beam.transform, sample, Mathf.Clamp(lr.widthMultiplier / 1.5f, 0.12f, 1.5f)))
                 {
-                    Line(lr, beam.transform, sample, Mathf.Clamp(lr.widthMultiplier / 1.5f, 0.12f, 1.5f));
+                    Effects.LinkBeam(attempt.WorldEvents.Count - 1, beam.gameObject);  // (its own line, light and flash in a replay)
                 }
             }
             catch (Exception e)
@@ -923,12 +984,13 @@ namespace UltraAttempts.Recording
             }
         }
 
-        private void Line(LineRenderer lr, Transform t, int sample, float life)
+        // (true if it was recorded)
+        private bool Line(LineRenderer lr, Transform t, int sample, float life)
         {
             int n = lr.positionCount;
             if (n < 2)
             {
-                return;
+                return false;
             }
             Vector3 from = lr.GetPosition(0), to = lr.GetPosition(n - 1);
             if (!lr.useWorldSpace)
@@ -938,7 +1000,7 @@ namespace UltraAttempts.Recording
             }
             if (!Near(from) && !Near(to))
             {
-                return;
+                return false;
             }
             float width = Mathf.Clamp(lr.widthMultiplier * Mathf.Max(lr.startWidth, lr.endWidth), 0.02f, 4f);
             Color color = lr.startColor;
@@ -951,7 +1013,7 @@ namespace UltraAttempts.Recording
             {
                 color *= m.color;
             }
-            Event(new WorldEvent
+            return Event(new WorldEvent
             {
                 Sample = sample,
                 Kind = WorldEventKind.Beam,
@@ -1011,7 +1073,7 @@ namespace UltraAttempts.Recording
 
         private bool Near(Vector3 p) => (p - center).sqrMagnitude <= Range * Range || center == Vector3.zero;
 
-        private void Event(WorldEvent e)
+        private bool Event(WorldEvent e)
         {
             if (attempt.WorldEvents.Count >= MaxEvents)
             {
@@ -1020,9 +1082,10 @@ namespace UltraAttempts.Recording
                     warnedEvents = true;
                     Plugin.Log.LogInfo($"this attempt has recorded {MaxEvents} explosions and beams: no more for it (WorldDetail = Everything's limit)");
                 }
-                return;
+                return false;
             }
             attempt.WorldEvents.Add(e);
+            return true;
         }
 
         // Something in the game didn't look as expected: the rest of this attempt goes without its things (V1,

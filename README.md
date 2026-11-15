@@ -97,6 +97,7 @@ When you follow that attempt:
 - Its projectiles and debris are drawn in their real materials.
 - The level's platforms and props move as they did for it, and go back afterwards.
 - Its explosions are the game's own: white for a moment, then their colour, growing and fading as the game does it, see-through (**ExplosionOpacity**) so they don't hide the fight. Its beams play, and what it broke breaks.
+- Its effects are the game's own too (**Effects**): copies of the very prefabs the game made, where and when it made them. Muzzle flashes (on the viewmodel through its eyes, at the ghost's gun from outside), slide and wall sparks, dodges, landing dust, punches and hits landing, blood, explosions' fire, smoke and light, and the revolver's and railcannon's own beams. Its projectiles are copies of theirs, with their trails and smoke. Particles run at the replay's speed, stop when it's paused and pick up at the right moment after a seek.
 
 The other attempts' worlds play at the same time: the 20 nearest living attempts, each see-through in its own colour, with their enemies, props, projectiles, explosions and beams. So all your attempts' fights happen on top of each other.
 - **O** turns them on and off, and the HUD says how many are showing.
@@ -164,7 +165,7 @@ With **WorldDetail** above Off, each attempt also records:
 
 With **RecordSounds** (on by default, whatever WorldDetail is), it also records each of the game's sounds as it starts: its clip by name (found again among the game's loaded clips later), when and where (V1's own go with the ghost), how loud, pitched and spread, when it stopped if it was cut off or looped, and where it went if it moved. Not the music, and nothing out of earshot. About 5 KB a minute in a fight.
 
-With Everything, it also records whatever else moves (see above): each thing with what it looks like (its meshes and materials by name, found again among the game's loaded assets later, or a coloured box) and where it was, plus explosions, beams and breakables as events. A busy fight adds about 40 KB a minute. Worlds are read back from the run file only when a replay needs them, so long runs still load quickly.
+With Everything, it also records whatever else moves (see above): each thing with what it looks like (its meshes and materials by name, found again among the game's loaded assets later, or a coloured box) and where it was, plus explosions, beams and breakables as events. A busy fight adds about 40 KB a minute. It also catches whatever the game makes as it makes it: projectiles from their first frame (shotgun pellets and nails are gone before a scan would see them), and every effect near V1. Each effect is its prefab by name, when it showed, stopped and went, and where (on V1's camera, on its body, or in the world, with keys while it moves). About 6 KB a minute more in a fight. Worlds are read back from the run file only when a replay needs them, so long runs still load quickly.
 
 Recordings are kept small. Each channel (positions, rotations, ...) is stored on its own. Positions and rotations are stored as the difference from where the two samples before predict them to be: moving at a steady speed or turning at a steady rate leaves nothing to store. Everything goes in as zigzag varints, and the whole attempt is deflated.
 - **Non-stop movement:** about 14 KB a minute at 60 Hz.
@@ -213,6 +214,7 @@ In `BepInEx\config\dev.ultracraft.attempts.cfg` (made the first time the game st
 | Replay / Loop | false | Start over at the end. |
 | Replay / ExplosionOpacity | 0.5 | How solid the followed attempt's explosions are (1: as in the game). |
 | Replay / DeathAnimations | true | Heads fly off, bodies fall over, blood (and the camera backs out to watch). Off: they just pop. |
+| Replay / Effects | true | The followed attempt's effects, projectiles and beams as the game's own (with WorldDetail = Everything). Off: projectiles are their meshes, beams plain lines. |
 | Keys / Watch, Exit | F8, Backspace | Watch on the results screen; leave a replay. |
 
 It records the levels (and custom levels), not the main menu, the Cyber Grind or the sandbox.
@@ -262,21 +264,21 @@ It saves screenshots and `selftest.log` into `tests/InGameTest/out`, then quits.
 The code:
 - `src/Recording`:
   - `Recorder.cs` watches V1 and cuts attempts (at death, restart, checkpoint respawn, leaving, the final pit).
-  - `WorldRecorder.cs` records the enemies and doors, and `ThingRecorder.cs` everything else.
+  - `WorldRecorder.cs` records the enemies and doors, and `ThingRecorder.cs` everything else. `EffectRecorder.cs` catches what the game makes: its effects, and things from their first frame.
   - `SoundRecorder.cs` records the game's sounds.
   - `RawAttempt.cs` is an attempt's samples, and `AttemptCodec.cs` packs them.
   - `SessionFile.cs` and `SessionStore.cs` are the run files and the folder, written on a background task.
 - `src/Replay`:
   - `ReplayDirector.cs` freezes the level, loads the attempts on a background task, runs the clock, the cameras and the controls, then puts everything back. `Ghost.cs` is one attempt ready to play: smooth curves through its samples, its world.
   - `GhostRenderer.cs`, `GhostModels.cs` and `WeaponModels.cs` draw the V1 ghosts, their weapons, bursts, markers, tracers and trails onto ULTRAKILL's camera, so they get its pixelation and palette.
-  - `WorldPlayback.cs` plays the followed attempt's enemies, and `DoorPlayback.cs` its doors. `DeathEffects.cs` is the deaths (heads, bodies, blood). `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds.
+  - `WorldPlayback.cs` plays the followed attempt's enemies, and `DoorPlayback.cs` its doors. `DeathEffects.cs` is the deaths (heads, bodies, blood). `GhostWorld.cs` reads attempts' worlds back as they're needed, and `ThingPlayback.cs` draws the things and the other attempts' see-through worlds. `EffectPlayback.cs` shows the followed attempt's effects, projectiles and beams as copies of the game's own prefabs.
   - `Puppet.cs` makes visual-only copies of the game's own models (V1, V2, enemies) from its Addressables.
   - `FirstPersonView.cs` is what you see through an attempt's eyes: `Viewmodel.cs` animates copies of your weapons and arm from what it recorded, and `FirstPersonHud.cs` shows its health and weapon on a copy of the game's HUD.
   - `ReplayHud.cs` is the overlay (in ULTRAKILL's VCR font), `ReplaySounds.cs` the synthesized sounds, `RoomReveal.cs` the rooms.
   - `GameSounds.cs` plays the game's own sounds back, every attempt's.
 - `src/AttemptsMenu.cs` is the ULTRAATTEMPTS menu on the pause screen.
 - `src/Cheats.cs` is the cheat menu, and `src/Patches.cs` the hooks into ULTRAKILL:
-  - Recording: scene loads, restarts, the results screen, the camera, doors opening and closing, explosions, beams and breakables.
+  - Recording: scene loads, restarts, the results screen, the camera, doors opening and closing, explosions, beams and breakables, and Unity's Instantiate (what the game makes).
   - Recording sounds: the game's Play, PlayOneShot and PlayDelayed, and its virtual audio picking up the sounds that play by themselves.
   - The replay: the camera, Escape, and the results screen's continue.
   - Doors switching rooms off.

@@ -353,7 +353,7 @@ namespace UltraAttempts.Replay
             environment = LayerMaskDefaults.Get(LMD.Environment);
             renderer = new GhostRenderer(cc.cam, root.transform);
             world = new WorldPlayback(cc.cam, root.transform);
-            things = new ThingPlayback(cc.cam);
+            things = new ThingPlayback(cc.cam, renderer);
             cache = new WorldCache();
             overlaid.Clear();
             overlaysPickedAt = -10f;
@@ -1707,7 +1707,7 @@ namespace UltraAttempts.Replay
             {
                 try
                 {
-                    things.Update(shown, shownWorld, t);
+                    things.Update(shown, shownWorld, t, pov);  // (pov: its muzzle flashes on the replay's camera)
                 }
                 catch (Exception e)
                 {

@@ -7,8 +7,8 @@ using UnityEngine.InputSystem;
 namespace UltraAttempts
 {
     // Where UltraAttempts hooks into ULTRAKILL. Recording only listens (scene loads, restarts, the results
-    // screen, the camera, doors, explosions, beams, breakables); the replay takes over the camera, Escape, and
-    // the results screen's "continue".
+    // screen, the camera, doors, explosions, beams, breakables, what the game makes); the replay takes over the
+    // camera, Escape, and the results screen's "continue".
     [HarmonyPatch]
     internal static class Patches
     {
@@ -61,6 +61,21 @@ namespace UltraAttempts
                 Recorder.Instance?.OnBreak(__instance, Replaying);
             }
         }
+
+        // ...and whatever the game makes (WorldDetail = Everything): its effects, and things from the frame they're
+        // made. Unity's generic Instantiate<T> with a position or parent calls one of these; only noted here (they run
+        // hundreds of times a second), looked at once the frame's done.
+        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Vector3), typeof(Quaternion)), HarmonyPostfix]
+        private static void Made(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
+
+        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Vector3), typeof(Quaternion), typeof(Transform)), HarmonyPostfix]
+        private static void MadeUnder(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
+
+        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Transform), typeof(bool)), HarmonyPostfix]
+        private static void MadeIn(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
+
+        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object)), HarmonyPostfix]
+        private static void Copied(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
 
         // After ULTRAKILL has put its camera on V1 for this frame: the recording's sample (body and eyes
         // read at the same moment), then the replay's camera.

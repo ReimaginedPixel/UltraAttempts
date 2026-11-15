@@ -401,7 +401,7 @@ namespace UltraAttempts.Recording
 
         public float Duration => Count <= 1 ? 0f : (Count - 1) / (float)SampleRate;
 
-        public bool HasThings => Things.Count > 0 || WorldEvents.Count > 0;
+        public bool HasThings => Things.Count > 0 || WorldEvents.Count > 0 || HasEffects;
 
         public void Add(int px, int py, int pz, short ex, short ey, short ez, short rx, short ry, short rz, short rw, byte flags, byte hp)
         {
