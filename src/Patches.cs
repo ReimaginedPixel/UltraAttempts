@@ -111,6 +111,23 @@ namespace UltraAttempts
             return !director.TryLevelEnd(__instance, thenNextLevel: true);
         }
 
+        // A gun really firing, whatever button did it: recorded as the attempt's shot. (Not the nailgun: it fires while
+        // held, which the attempt has already.)
+        [HarmonyPatch(typeof(Revolver), "Shoot", typeof(int)), HarmonyPrefix]
+        private static void RevolverFired() => Recorder.Instance?.OnShot(Replaying);
+
+        [HarmonyPatch(typeof(Shotgun), "Shoot", new System.Type[0]), HarmonyPrefix]
+        private static void ShotgunFired() => Recorder.Instance?.OnShot(Replaying);
+
+        [HarmonyPatch(typeof(ShotgunHammer), "Impact", new System.Type[0]), HarmonyPrefix]
+        private static void HammerSwung() => Recorder.Instance?.OnShot(Replaying);
+
+        [HarmonyPatch(typeof(RocketLauncher), nameof(RocketLauncher.Shoot), new System.Type[0]), HarmonyPrefix]
+        private static void RocketFired() => Recorder.Instance?.OnShot(Replaying);
+
+        [HarmonyPatch(typeof(Railcannon), "Shoot", new System.Type[0]), HarmonyPrefix]
+        private static void RailcannonFired() => Recorder.Instance?.OnShot(Replaying);
+
         // A punch really starting (it was ready for one), whatever button did it: recorded as the attempt's punch.
         [HarmonyPatch(typeof(Punch), nameof(Punch.PunchStart)), HarmonyPrefix]
         private static void Punching(Punch __instance)

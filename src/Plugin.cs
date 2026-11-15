@@ -15,7 +15,7 @@ namespace UltraAttempts
     // UltraAttempts: records every attempt at every ULTRAKILL level, then plays them all at once like
     // Geometry Dash's attempt replays. Recording isn't a cheat (it changes nothing); watching is in the
     // cheat menu, or plays by itself once the level's beaten.
-    [BepInPlugin("dev.ultracraft.attempts", "UltraAttempts", "1.3.0")]
+    [BepInPlugin("dev.ultracraft.attempts", "UltraAttempts", "1.4.0")]
     public sealed class Plugin : BaseUnityPlugin
     {
         internal static ManualLogSource Log;

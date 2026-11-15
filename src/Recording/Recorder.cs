@@ -265,6 +265,16 @@ namespace UltraAttempts.Recording
             }
         }
 
+        // A gun really firing (its own Shoot), whatever button did it: the sample's shot. (The fire button's press, read
+        // once a frame, missed most of them.)
+        public void OnShot(bool replaying)
+        {
+            if (current != null && !replaying && Settings.RecordWeapons.Value)
+            {
+                pulses |= SampleFlags.Shot;
+            }
+        }
+
         // The attempt sample it is right now, between this frame's samples (the game clock since the last step).
         private int SampleNow => Math.Max(0, (int)Math.Round((time + Math.Max(0.0, Time.timeAsDouble - clock)) / interval));
 
