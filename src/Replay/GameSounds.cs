@@ -814,7 +814,7 @@ namespace UltraAttempts.Replay
         // replay's speed, as loud as their copies add up to.
         private void Follow(Ghost shown, float t, float speed, Vector3 camPos, Quaternion camRot, bool throughEyes)
         {
-            float volume = Settings.Volume.Value * sfx;
+            float volume = Loudness * sfx;
             foreach (Voice v in voices)
             {
                 if (!v.Busy)
@@ -847,6 +847,17 @@ namespace UltraAttempts.Replay
                 source.pitch = Mathf.Clamp(v.Pitch * speed, -3f, 3f);
                 float louder = Mathf.Min(2f, 1f + 0.25f * Mathf.Log(Mathf.Max(1, v.Copies), 2f));
                 source.volume = Mathf.Clamp01(v.Loudest * louder * volume);
+            }
+        }
+
+        // How loud the game's sounds are, from Replay.Volume: at its default, as loud as they were (the followed
+        // attempt's as you heard it; the others' at OtherAttemptsVolume of that); quieter below it.
+        private static float Loudness
+        {
+            get
+            {
+                float full = Settings.Volume.DefaultValue is float d && d > 0f ? d : 0.6f;
+                return Mathf.Clamp01(Settings.Volume.Value / full);
             }
         }
 
@@ -892,7 +903,7 @@ namespace UltraAttempts.Replay
             string old = attemptsWithout > 0 ? $"; {attemptsWithout} recorded before sounds were: {oldShots} of their shots with the game's fire sounds ({weaponsFound} of your weapons')" : "";
             Plugin.Log.LogInfo($"replay sounds{(Settings.Sounds.Value ? "" : " (Replay.Sounds is off)")}: {playedFollowed + playedOthers} played ({playedFollowed} the followed attempt's, {playedOthers} the others'), {merged} joined the same sound from another attempt, "
                 + $"{noVoice} left out with every voice busy ({stolen} cut for nearer ones), {resumed} loops carried on over {cuts} cuts; {clips}; {attemptsWith} attempts with sounds{old}; "
-                + $"the game's sound effects volume {sfx:0.##}, the listener {(listenerOnCamera ? "on the camera" : "off the camera (sounds placed relative to it)")}, {prepareMs:0} ms to get ready");
+                + $"the game's sound effects volume {sfx:0.##} (at {Loudness:0.##} of how loud they were, from Replay.Volume), the listener {(listenerOnCamera ? "on the camera" : "off the camera (sounds placed relative to it)")}, {prepareMs:0} ms to get ready");
         }
     }
 }

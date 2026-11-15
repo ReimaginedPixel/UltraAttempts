@@ -64,6 +64,7 @@ namespace UltraAttempts.Replay
 
         private readonly WeaponModels guns;
         private readonly DeathEffects deaths;
+        private readonly WhiplashDrawer whip;
         private readonly GhostModelKit kit;
         private readonly Transform modelRoot;
         private readonly GhostFrameHook hook;
@@ -147,6 +148,8 @@ namespace UltraAttempts.Replay
             followTrail = MakeTrail(root, "follow trail");
             guns = new WeaponModels(root, layer);
             deaths = new DeathEffects(cam, layer, ghost, cube, sphere, body, StartOf);
+            whip = new WhiplashDrawer(root, cam, layer, ghost, cube);
+            ModelMeshes.LogOnce(whip.Report);
 
             var models = new GameObject("UltraAttempts ghost models");
             models.transform.SetParent(root, false);
@@ -186,6 +189,7 @@ namespace UltraAttempts.Replay
             live.Clear();
             kit?.Dispose();
             guns.Dispose();
+            whip.Dispose();
             if (modelRoot != null)
             {
                 Object.Destroy(modelRoot.gameObject);
@@ -282,6 +286,7 @@ namespace UltraAttempts.Replay
             haveFrame = true;
             entryCount = 0;
             camPos = cam != null ? cam.transform.position : Vector3.zero;
+            whip.Begin();
         }
 
         // One ghost. featured: the one the camera follows (or the winner): the real model, outlined, seen
@@ -320,6 +325,7 @@ namespace UltraAttempts.Replay
         {
             if (!Models)
             {
+                whip.End();  // (else after the animated ones, in LateFrame)
                 return;
             }
             try
@@ -658,6 +664,7 @@ namespace UltraAttempts.Replay
                     if (pup.Shown && pup.Ghost != null)
                     {
                         pup.Shown = false;
+                        PunchPose(pup);
                         DrawLive(pup);
                     }
                 }
@@ -666,6 +673,57 @@ namespace UltraAttempts.Replay
             {
                 Fail(e);
             }
+            whip.End();
+        }
+
+        // Its left arm punching, over what its animator did this frame: the upper arm swung out where it looked and
+        // the forearm straightened along it, in a moment, held, then back (the game's own V1 has no punch of its own).
+        private void PunchPose(LivePuppet pup)
+        {
+            // (V2 punches by its own animator: GhostModels' V2Driver)
+            if (pup.UpperArmL == null || pup.ForearmL == null || pup.HandL == null || !kit.Wings)
+            {
+                return;
+            }
+            if (pup.Punching)
+            {
+                // (last frame's swing put back, where its animator hasn't moved the arm since)
+                pup.Punching = false;
+                if (pup.UpperArmL.localRotation == pup.UpperSet)
+                {
+                    pup.UpperArmL.localRotation = pup.UpperWas;
+                }
+                if (pup.ForearmL.localRotation == pup.ForeSet)
+                {
+                    pup.ForearmL.localRotation = pup.ForeWas;
+                }
+            }
+            float since = pup.Weapons ? pup.Ghost.SincePunch(Mathf.Min(frameT, pup.Ghost.Duration)) : float.PositiveInfinity;
+            float w = since < 0.06f ? since / 0.06f : since < 0.14f ? 1f : since < 0.4f ? 1f - (since - 0.14f) / 0.26f : 0f;
+            if (w <= 0f)
+            {
+                return;
+            }
+            w = w * w * (3f - 2f * w);
+            pup.UpperWas = pup.UpperArmL.localRotation;
+            pup.ForeWas = pup.ForearmL.localRotation;
+            // (a little in toward the middle: the left fist lands in front of the face)
+            Vector3 aim = (pup.Pose.Look * Vector3.forward + pup.Rotation * Vector3.right * 0.2f).normalized;
+            Swing(pup.UpperArmL, pup.ForearmL.position - pup.UpperArmL.position, aim, w);
+            Swing(pup.ForearmL, pup.HandL.position - pup.ForearmL.position, aim, w);
+            pup.UpperSet = pup.UpperArmL.localRotation;
+            pup.ForeSet = pup.ForearmL.localRotation;
+            pup.Punching = true;
+        }
+
+        private static void Swing(Transform bone, Vector3 along, Vector3 aim, float w)
+        {
+            if (along.sqrMagnitude < 1e-8f)
+            {
+                return;
+            }
+            Quaternion turn = Quaternion.FromToRotation(along, aim);
+            bone.rotation = Quaternion.Slerp(Quaternion.identity, turn, w) * bone.rotation;
         }
 
         private void DrawLive(LivePuppet pup)
@@ -716,6 +774,9 @@ namespace UltraAttempts.Replay
                 Vector3 hand = pup.Hand != null ? pup.Hand.position : pup.Bottom + pup.Rotation * (kit.Hands[pup.PoseIndex] * pup.Height);
                 SetHand(pup.Ghost, hand, pup.Size, onScreen: false);
                 DrawHeld(pup.Ghost, pup.Pose.Sample, hand, pup.Pose.Look, pup.Size, pup.Featured ? 1f : pup.Alpha, ghost, real: pup.Featured, parts: true);
+                Vector3 right = kit.Hands[pup.PoseIndex];
+                Vector3 left = pup.HandL != null ? pup.HandL.position : pup.Bottom + pup.Rotation * (new Vector3(-right.x, right.y, right.z) * pup.Height);
+                whip.Draw(pup.Ghost, Mathf.Min(frameT, pup.Ghost.Duration), left, pup.Pose.Look, pup.Color, pup.Featured);
             }
         }
 
@@ -759,6 +820,9 @@ namespace UltraAttempts.Replay
                 Vector3 hand = m.MultiplyPoint3x4(kit.Hands[pose]);
                 SetHand(e.G, hand, e.Height / ReferenceHeight, onScreen: false);
                 DrawHeld(e.G, e.P.Sample, hand, e.P.Look, e.Height / ReferenceHeight, e.Alpha, ghost, real: false, parts: false);
+                // (its left hand: the right one's mirror image)
+                Vector3 right = kit.Hands[pose];
+                whip.Draw(e.G, Mathf.Min(frameT, e.G.Duration), m.MultiplyPoint3x4(new Vector3(-right.x, right.y, right.z)), e.P.Look, Tint(e.G, e.Hurt, e.M.Dashing, e.Alpha), e.Featured);
             }
         }
 
@@ -874,6 +938,7 @@ namespace UltraAttempts.Replay
                     Vector3 hand = p.Eye + p.Look * new Vector3(0.42f, -0.3f, 0.3f);
                     SetHand(g, hand, 1f, onScreen: false);
                     DrawHeld(g, p.Sample, hand, p.Look, 1f, alpha, mat, real: false, parts: featured);
+                    whip.Draw(g, Mathf.Min(frameT, g.Duration), p.Eye + p.Look * new Vector3(-0.42f, -0.3f, 0.3f), p.Look, new Color(color.r, color.g, color.b, alpha), featured);
                 }
             }
         }

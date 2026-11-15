@@ -71,6 +71,7 @@ namespace UltraAttempts.Replay
                 return;
             }
             var needed = new HashSet<string>();
+            var neededArms = new HashSet<Recording.ArmKind>();
             foreach (Ghost g in ghosts)
             {
                 foreach (Ghost.WeaponChange w in g.Weapons)
@@ -81,6 +82,10 @@ namespace UltraAttempts.Replay
                         needed.Add(name);
                     }
                 }
+                foreach (Recording.ArmSwitch s in g.ArmSwitches)
+                {
+                    neededArms.Add(s.Arm);
+                }
             }
             if (hudCam == null)
             {
@@ -90,7 +95,7 @@ namespace UltraAttempts.Replay
             {
                 try
                 {
-                    guns = Viewmodel.Build(mirror, needed, out gunsReport);
+                    guns = Viewmodel.Build(mirror, cc.cam, needed, neededArms, out gunsReport);
                 }
                 catch (Exception e)
                 {

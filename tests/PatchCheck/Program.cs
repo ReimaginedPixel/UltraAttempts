@@ -14,10 +14,10 @@ internal static class Program
 {
     // Every hook in Patches: cheats, scene loads, restarts, results, rooms off, doors opening and
     // closing, explosions, beams (hitscan and lasting), breakables, the camera, Escape, continuing from the
-    // results screen; the game's sounds (Play, PlayOneShot, PlayDelayed, and its virtual audio picking up
-    // the ones that play by themselves); and what it makes (Unity's four non-generic Instantiates, for its
+    // results screen; punches starting; the game's sounds (Play, PlayOneShot, PlayDelayed, and its virtual audio
+    // picking up the ones that play by themselves); and what it makes (Unity's four non-generic Instantiates, for its
     // effects and projectiles).
-    private const int Expected = 22;
+    private const int Expected = 23;
 
     private static string game;
     private static string plugin;
@@ -110,6 +110,9 @@ internal static class Program
     {
         ("Explosion", "originalMaterial", "Material"),
         ("Explosion", "materialColor", "Color"),
+        ("HookArm", "hookPoint", "Vector3"),
+        ("HookArm", "returning", "Boolean"),
+        ("HookArm", "model", "GameObject"),
     };
 
     [MethodImpl(MethodImplOptions.NoInlining)]

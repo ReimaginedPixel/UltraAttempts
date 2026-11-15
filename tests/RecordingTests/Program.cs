@@ -38,6 +38,7 @@ internal static class Program
             Blocks();
             Effects();
             Sections();
+            Arms();
             OldAttempts();
             Damage();
             Compression();
@@ -184,7 +185,8 @@ internal static class Program
                 $"{new FileInfo(file).Length / Math.Max(seconds, 0.1):0} bytes/s, eye jitter {(samples > 0 ? jitter / samples : 0):0.0} cm/sample, {(samples > 0 ? 100.0 * shaky / samples : 0):0.0}% shaken (>10 cm)" +
                 $"{(run.Attempts.Any(a => a.Enemies.Count > 0) ? $", {run.Attempts.Sum(a => a.Enemies.Count)} enemy tracks" : "")}" +
                 $"{(run.Attempts.Any(a => a.HasThings) ? $", {run.Attempts.Sum(a => a.Things.Count)} things, {run.Attempts.Sum(a => a.WorldEvents.Count)} explosions/beams/breaks" : "")}" +
-                $"{(run.Attempts.Any(a => a.SoundsRecorded) ? $", {run.Attempts.Sum(a => a.Sounds.Count)} sounds ({run.Attempts.SelectMany(a => a.SoundClips).Select(c => c.Name).Distinct().Count()} clips)" : "")}");
+                $"{(run.Attempts.Any(a => a.SoundsRecorded) ? $", {run.Attempts.Sum(a => a.Sounds.Count)} sounds ({run.Attempts.SelectMany(a => a.SoundClips).Select(c => c.Name).Distinct().Count()} clips)" : "")}" +
+                $", {run.Attempts.Sum(a => Enumerable.Range(0, a.Count).Count(i => (a.Flags[i] & (byte)SampleFlags.Shot) != 0))} shots, {run.Attempts.Sum(a => Enumerable.Range(0, a.Count).Count(i => (a.Flags[i] & (byte)SampleFlags.Punch) != 0))} punch presses");
             foreach (string error in errors)
             {
                 Console.WriteLine("        " + error);
@@ -1101,6 +1103,98 @@ internal static class Program
         {
             return true;
         }
+    }
+
+    // Block 1, V1's arms: which arm it had and when it switched, its animators' states (any hash, any time, every
+    // flag, both parts), and the whiplash's path (out of order is never written, but far off, standing still, thrown
+    // fast, and every phase). Exact, with or without the world; cloned on its own; an attempt without them says so.
+    private static void Arms()
+    {
+        Console.WriteLine("arms");
+        var random = new Random(51);
+        RawAttempt a = Sample(12, 600, 12);
+        a.ArmsRecorded = true;
+        a.ArmSwitches.Add(new ArmSwitch { Sample = 0, Arm = ArmKind.Feedbacker });
+        a.ArmSwitches.Add(new ArmSwitch { Sample = 120, Arm = ArmKind.Knuckleblaster });
+        a.ArmSwitches.Add(new ArmSwitch { Sample = 121, Arm = ArmKind.None });
+        a.ArmSwitches.Add(new ArmSwitch { Sample = 599, Arm = (ArmKind)200 });
+        int sample = 0;
+        for (int i = 0; i < 300; i++)
+        {
+            sample += random.Next(0, 4);
+            a.ArmMoves.Add(new ArmMove
+            {
+                Sample = sample,
+                Part = (ArmPart)(i % 2),
+                Flags = (ArmMoveFlags)random.Next(0, 16),
+                State = i == 0 ? int.MinValue : i == 1 ? int.MaxValue : i == 2 ? 0 : random.Next(int.MinValue, int.MaxValue),
+                Time = (ushort)(i == 3 ? ushort.MaxValue : random.Next(0, 65536)),
+            });
+        }
+        // Thrown fast, caught on something far off and still, pulled in, coming back; again after a gap.
+        int x = 1_000_000, y = -20_000_000, z = 5;
+        for (int k = 30; k < 200; k++)
+        {
+            if (k == 90)
+            {
+                k = 140;
+            }
+            var phase = k < 60 ? HookPhase.Throwing : k < 70 ? HookPhase.Caught : k < 80 ? HookPhase.Pulling : HookPhase.Returning;
+            if (phase == HookPhase.Throwing)
+            {
+                x += 250;
+                z -= 33;
+            }
+            a.Hook.Add(k, phase, x, y + random.Next(-3, 4), z);
+        }
+        RawAttempt b = RoundTrip(a);
+        RawAttempt bare = RoundTrip(a, world: false);
+        Check(Same(a, b) && SameArms(a, b), $"the arms come back exactly ({a.ArmSwitches.Count} switches, {a.ArmMoves.Count} animations, {a.Hook.Count} samples with the whiplash out)");
+        Check(SameArms(a, bare), "...without the world too (every ghost may show its arm)");
+
+        RawAttempt clone = a.Clone(AttemptEnd.InProgress);
+        a.ArmMoves.Add(new ArmMove { Sample = 700 });
+        a.Hook.Add(700, HookPhase.Throwing, 1, 2, 3);
+        a.Hook.X[0] = 77;
+        Check(clone.ArmsRecorded && clone.ArmMoves.Count == 300 && clone.Hook.Count == b.Hook.Count && clone.Hook.X[0] == b.Hook.X[0], "...and clone on their own");
+
+        RawAttempt none = Sample(13, 50, 13);
+        RawAttempt noneBack = RoundTrip(none);
+        Check(!noneBack.ArmsRecorded && noneBack.ArmSwitches.Count == 0 && noneBack.ArmMoves.Count == 0 && noneBack.Hook.Count == 0, "an attempt recorded without its arms says so");
+        RawAttempt empty = Sample(14, 50, 14);
+        empty.ArmsRecorded = true;
+        Check(RoundTrip(empty).ArmsRecorded, "...and one with them but no punches says that");
+    }
+
+    private static bool SameArms(RawAttempt a, RawAttempt b)
+    {
+        if (a.ArmsRecorded != b.ArmsRecorded || a.ArmSwitches.Count != b.ArmSwitches.Count || a.ArmMoves.Count != b.ArmMoves.Count || a.Hook.Count != b.Hook.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.ArmSwitches.Count; i++)
+        {
+            if (a.ArmSwitches[i].Sample != b.ArmSwitches[i].Sample || a.ArmSwitches[i].Arm != b.ArmSwitches[i].Arm)
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < a.ArmMoves.Count; i++)
+        {
+            ArmMove p = a.ArmMoves[i], q = b.ArmMoves[i];
+            if (p.Sample != q.Sample || p.Part != q.Part || p.Flags != q.Flags || p.State != q.State || p.Time != q.Time)
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < a.Hook.Count; i++)
+        {
+            if (a.Hook.Sample[i] != b.Hook.Sample[i] || a.Hook.Phase[i] != b.Hook.Phase[i] || a.Hook.X[i] != b.Hook.X[i] || a.Hook.Y[i] != b.Hook.Y[i] || a.Hook.Z[i] != b.Hook.Z[i])
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     // An attempt recorded by UltraAttempts 1.0: format 1, written by its own encoder (commit bf1d01f)
