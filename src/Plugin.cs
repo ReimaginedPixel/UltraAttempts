@@ -50,7 +50,25 @@ namespace UltraAttempts
             Settings.ContinueRunsAcrossVisits.SettingChanged += (_, __) => Store.ContinueAcrossVisits = Settings.ContinueRunsAcrossVisits.Value;
             Settings.KeepRunsPerLevel.SettingChanged += (_, __) => Store.KeepRunsPerLevel = Settings.KeepRunsPerLevel.Value;
 
-            new Harmony("dev.ultracraft.attempts").PatchAll(typeof(Plugin).Assembly);
+            // (each class of hooks on its own: one that can't be applied after a game update takes only its own along)
+            var harmony = new Harmony("dev.ultracraft.attempts");
+            foreach (Type type in AccessTools.GetTypesFromAssembly(typeof(Plugin).Assembly))
+            {
+                if (type.GetCustomAttributes(typeof(HarmonyPatch), false).Length == 0)
+                {
+                    continue;
+                }
+                try
+                {
+                    harmony.CreateClassProcessor(type).Patch();
+                }
+                catch (Exception e)
+                {
+                    Log.LogError(type == typeof(Patches.Spawns)
+                        ? "can't watch what the game makes (a game update?): replays show fewer effects and projectiles. " + e.GetBaseException().Message
+                        : $"couldn't hook into the game ({type.Name}; a game update?): " + e);
+                }
+            }
 
             var host = new GameObject("UltraAttempts");
             DontDestroyOnLoad(host);

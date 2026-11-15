@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -54,7 +55,10 @@ internal static class Program
         Type patches = assembly.GetType("UltraAttempts.Patches", throwOnError: true);
         var harmony = new Harmony("ultraattempts.patchcheck");
         int ok = 0, failed = 0;
-        foreach (MethodInfo hook in patches.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly))
+        // (and the classes of hooks inside it, patched on their own)
+        IEnumerable<MethodInfo> hooks = new[] { patches }.Concat(patches.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public))
+            .SelectMany(t => t.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly));
+        foreach (MethodInfo hook in hooks)
         {
             var target = hook.GetCustomAttributes<HarmonyPatch>().Select(a => a.info).FirstOrDefault(i => i.declaringType != null);
             if (target == null)

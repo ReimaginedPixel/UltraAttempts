@@ -62,21 +62,6 @@ namespace UltraAttempts
             }
         }
 
-        // ...and whatever the game makes (WorldDetail = Everything): its effects, and things from the frame they're
-        // made. Unity's generic Instantiate<T> with a position or parent calls one of these; only noted here (they run
-        // hundreds of times a second), looked at once the frame's done.
-        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Vector3), typeof(Quaternion)), HarmonyPostfix]
-        private static void Made(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
-
-        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Vector3), typeof(Quaternion), typeof(Transform)), HarmonyPostfix]
-        private static void MadeUnder(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
-
-        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Transform), typeof(bool)), HarmonyPostfix]
-        private static void MadeIn(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
-
-        [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object)), HarmonyPostfix]
-        private static void Copied(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
-
         // After ULTRAKILL has put its camera on V1 for this frame: the recording's sample (body and eyes
         // read at the same moment), then the replay's camera.
         [HarmonyPatch(typeof(CameraController), "LateUpdate"), HarmonyPostfix]
@@ -158,6 +143,26 @@ namespace UltraAttempts
             {
                 // (the recorder logs its own failures; this only guards the filter's own lookups)
             }
+        }
+
+        // ...and whatever the game makes (WorldDetail = Everything): its effects, and things from the frame they're
+        // made. Unity's generic Instantiate<T> with a position or parent calls one of these; only noted here (they run
+        // hundreds of times a second), looked at once the frame's done. Hooks into Unity itself, so patched on their
+        // own: if they can't be, the rest still is (Plugin).
+        [HarmonyPatch]
+        internal static class Spawns
+        {
+            [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Vector3), typeof(Quaternion)), HarmonyPostfix]
+            private static void Made(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
+
+            [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Vector3), typeof(Quaternion), typeof(Transform)), HarmonyPostfix]
+            private static void MadeUnder(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
+
+            [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object), typeof(Transform), typeof(bool)), HarmonyPostfix]
+            private static void MadeIn(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
+
+            [HarmonyPatch(typeof(UnityEngine.Object), nameof(UnityEngine.Object.Instantiate), typeof(UnityEngine.Object)), HarmonyPostfix]
+            private static void Copied(UnityEngine.Object original, UnityEngine.Object __result) => Recorder.Instance?.OnSpawn(original, __result, Replaying);
         }
     }
 }
